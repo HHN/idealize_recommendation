@@ -1,8 +1,23 @@
+#   Copyright 2024 Prof. Dr. Mahsa Fischer, Hochschule Heilbronn
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.*/
+
 import requests
 import pymysql
 import json
 import os
 import sys
+import langdetect
 from datetime import datetime
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
@@ -13,7 +28,7 @@ connection = pymysql.connect(
     host='127.0.0.1',
     user='root',
     password='',
-    database='test',
+    database='recsys',
     cursorclass=pymysql.cursors.DictCursor
 )
 
@@ -64,11 +79,15 @@ def insert_data_from_api():
     tags = response_tags.json()
 
     with connection.cursor() as cursor:
+        # Leeren der bisherigen Tabellen
+        # --------------------------------
+        # Achtung: Project_Tags gibt es ja nicht mehr
         cursor.execute("""DELETE FROM Tags""")
         cursor.execute("""DELETE FROM Projects""")
-        cursor.execute("""DELETE FROM Project_Tags""")
         cursor.execute("""DELETE FROM Users""")
-
+        
+        # Tags einfügen
+        # --------------------------------
         for tag in tags:
             created_at = convert_iso_to_mysql_datetime(tag['createdAt'])
             updated_at = convert_iso_to_mysql_datetime(tag['updatedAt'])
@@ -77,28 +96,58 @@ def insert_data_from_api():
                 """
                 INSERT INTO Tags (_id, name, type, createdAt, updatedAt)
                 VALUES (%s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), createdAt=VALUES(createdAt), updatedAt=VALUES(updatedAt)
+                ON DUPLICATE KEY UPDATE 
+                    name = VALUES(name),
+                    type = VALUES(type),
+                    createdAt = VALUES(createdAt),
+                    updatedAt = VALUES(updatedAt)
                 """,
                 (tag['_id'], tag['name'], tag['type'], created_at, updated_at)
             )
 
+        # Users einfügen
+        # --------------------------------
         for user in users:
             created_at = convert_iso_to_mysql_datetime(user['createdAt'])
             updated_at = convert_iso_to_mysql_datetime(user['updatedAt'])
 
             cursor.execute(
                 """
-                INSERT INTO Users (_id, firstName, lastName, email, username, status, userType, interestedTags, interestedCourses, studyPrograms, isBlockedByAdmin, createdAt, updatedAt)
+                INSERT INTO Users (_id, firstName, lastName, email, username, status, userType, 
+                                   interestedTags, interestedCourses, studyPrograms, 
+                                   isBlockedByAdmin, createdAt, updatedAt)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE firstName=VALUES(firstName), lastName=VALUES(lastName), email=VALUES(email), username=VALUES(username), status=VALUES(status),
-                userType=VALUES(userType), interestedTags=VALUES(interestedTags), interestedCourses=VALUES(interestedCourses), studyPrograms=VALUES(studyPrograms),
-                isBlockedByAdmin=VALUES(isBlockedByAdmin), createdAt=VALUES(createdAt), updatedAt=VALUES(updatedAt)
+                ON DUPLICATE KEY UPDATE 
+                    firstName = VALUES(firstName),
+                    lastName = VALUES(lastName),
+                    email = VALUES(email),
+                    username = VALUES(username),
+                    status = VALUES(status),
+                    userType = VALUES(userType), 
+                    interestedTags = VALUES(interestedTags), 
+                    interestedCourses = VALUES(interestedCourses), 
+                    studyPrograms = VALUES(studyPrograms),
+                    isBlockedByAdmin = VALUES(isBlockedByAdmin),
+                    createdAt = VALUES(createdAt), 
+                    updatedAt = VALUES(updatedAt)
                 """,
-                (user['_id'], user['firstName'], user['lastName'], user['email'], user['username'], user['status'],
-                 user['userType'], json.dumps(user['interestedTags']), json.dumps(user['interestedCourses']),
-                 json.dumps(user['studyPrograms']), user['isBlockedByAdmin'], created_at, updated_at)
+                (user['_id'],
+                 user['firstName'],
+                 user['lastName'],
+                 user['email'],
+                 user['username'],
+                 user['status'],
+                 user['userType'],
+                 json.dumps(user['interestedTags']),
+                 json.dumps(user['interestedCourses']),
+                 json.dumps(user['studyPrograms']),
+                 user['isBlockedByAdmin'],
+                 created_at,
+                 updated_at)
             )
 
+        # Projects einfügen — jetzt mit "tags" als longtext-Feld
+        # --------------------------------
         for project in projects:
             created_at = convert_iso_to_mysql_datetime(project['createdAt'])
             updated_at = convert_iso_to_mysql_datetime(project['updatedAt'])
@@ -107,30 +156,39 @@ def insert_data_from_api():
             if isinstance(project['owner'], dict) and '_id' in project['owner']:
                 owner_id = project['owner']['_id']
 
+            # Anstatt über Project_Tags zu iterieren, speichern wir hier die Tags als JSON
             cursor.execute(
                 """
-                INSERT INTO Projects (_id, title, description, owner_id, isDraft, links, attachments, createdAt, updatedAt)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description), owner_id=VALUES(owner_id), isDraft=VALUES(isDraft),
-                links=VALUES(links), attachments=VALUES(attachments), createdAt=VALUES(createdAt), updatedAt=VALUES(updatedAt)
+                INSERT INTO Projects (_id, title, description, tags, owner_id, isDraft, links, attachments, createdAt, updatedAt)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    title = VALUES(title),
+                    description = VALUES(description),
+                    tags = VALUES(tags),
+                    owner_id = VALUES(owner_id),
+                    isDraft = VALUES(isDraft),
+                    links = VALUES(links),
+                    attachments = VALUES(attachments),
+                    createdAt = VALUES(createdAt),
+                    updatedAt = VALUES(updatedAt)
                 """,
-                (project['_id'], project['title'], project['description'], owner_id,
-                 project['isDraft'], json.dumps(project['links']), json.dumps(project['attachments']),
-                 created_at, updated_at)
-            )
-
-            for tag in project['tags']:
-                cursor.execute(
-                    """
-                    INSERT INTO Project_Tags (project_id, tag_id)
-                    VALUES (%s, %s)
-                    ON DUPLICATE KEY UPDATE project_id=VALUES(project_id), tag_id=VALUES(tag_id)
-                    """,
-                    (project['_id'], tag['_id'])
+                (
+                    project['_id'],
+                    project['title'],
+                    project['description'],
+                    json.dumps(project['tags']),
+                    owner_id,
+                    project['isDraft'],
+                    json.dumps(project['links']),
+                    json.dumps(project['attachments']),
+                    created_at,
+                    updated_at
                 )
+            )
 
         connection.commit()
         return True
+
 
 import json
 
@@ -139,7 +197,7 @@ def run_langchain_query(prompt):
         "host": "127.0.0.1",
         "user": "root",
         "password": "",
-        "database": "test",
+        "database": "recsys",
         "port": 3306
     }
 
@@ -152,14 +210,14 @@ def run_langchain_query(prompt):
     )
 
     llm = ChatOpenAI(model="gpt-4-turbo")
-
+    # Erkenne die Sprache des Prompts
+    lang = langdetect.detect(prompt)
     agent_executor = create_sql_agent(llm, db=db, agent_type="openai-tools", verbose=True)
-
-    specific_prompt = """
+    if lang == 'de':
+            specific_prompt ="""
        Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
-
-    - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld `_id`, `title` und das Feld `createdAt` für jedes Projekt zurück.
-    - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder `_id`, `firstName`, `lastName` und `interestedTags` für jede Person zurück.
+    - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
+    - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
     - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
 
     {
@@ -187,9 +245,41 @@ def run_langchain_query(prompt):
     Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort.
     """
 
+    else:
+        specific_prompt = """
+        I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
+    - When the request is about projects, return only the fields _id, title, and createdAt for each project.
+    - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
+    - In your response, I expect EXACTLY the following JSON format:
+
+    {
+    "message": "Your response text",
+    "projects": [
+        {
+        "_id": "objectID",
+        "title": "Project name",
+        "createdAt": "2024-10-21 10:30:00"
+        }
+    ],
+    "users": [
+        {
+        "_id": "objectID",
+        "firstName": "First name",
+        "lastName": "Last name",
+        "interestedTags": ["Tag1", "Tag2"]
+        }
+    ]
+    }
+
+    Also, only return the output; nothing from the input.
+    If no projects or people are relevant in the request, leave the corresponding lists empty.
+
+    Do not use confidential data such as passwords, email addresses, or codes in the response.
+
+    Always answer in the same language as the following request:
+    """
     # Combine the original prompt with the specific prompt
     query = specific_prompt + "\n\n" + prompt
-
     result = agent_executor.invoke(query)
 
     if 'output' not in result:

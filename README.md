@@ -2,6 +2,13 @@
 
 This is a project that integrates a chatbot with a MySQL database using Langchain and OpenAI's GPT-4-turbo model. The project is designed to interact with a database of projects, users, and tags, and respond with specific fields based on the user's prompt.
 
+Recommendation system for projects and users:
+The recommendation system is an important feature of the project. Tailored recommendations are generated based on the interests, preferences and profile information of the users and the requirements of the projects.
+Use case - recommendation system:
+
+The system uses an LLM-based model to understand the user's query. Based on this, the database is searched and suitable projects/users are returned.
+Example: A student asks the recommendation system for projects in the field of “data science” and receives suggestions for projects that cover this subject area. At the same time, the system can provide recommendations for professors who have similar interests or are supervised for relevant projects.
+
 ## Acknowledgements
 This project was developed as part of the InduKo Project, funded by Stiftung Innovation in der Hochschullehre.
 We also acknowledge the support from students, faculty and contributors who have been part of this collaborative effort.
@@ -13,6 +20,17 @@ For more iniformation about the IdeaLize project platform, visit the official  w
 ## License 
 
 This project is licensed under Apache License, Version 2.0. Copyright 2024 Prof. Dr. Mahsa Fischer, Hochschule Heilbronn
+
+## Licenses for Third-Party Libraries
+This project includes several third-party libraries under open-source licenses. Key libraries include:
+
+- [FastAPI](https://fastapi.tiangolo.com/) (MIT License)
+- [Pydantic](https://pydantic-docs.helpmanual.io/) (MIT License)
+- [Requests](https://requests.readthedocs.io/) (Apache 2.0 License)
+- [PyMySQL](https://pypi.org/project/PyMySQL/) (MIT License)
+- [Uvicorn](https://www.uvicorn.org/) (BSD-3-Clause License)
+- [Langchain](https://github.com/langchain-ai/langchain/blob/master/LICENSE) (MIT License)
+- [OpenAI](https://github.com/openai/openai-python) (Apache 2.0 License)
 
 ## Installation and Setup
 
@@ -41,70 +59,61 @@ Create a new MySQL database with your preferred name.
 Use the following SQL to create the necessary tables:
 
 
-```-- Create `chat_log` table
-CREATE TABLE `chat_log` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `prompt` text NOT NULL,
-  `response` text NOT NULL,
-  `timestamp` datetime DEFAULT current_timestamp(),
+-- SQL Template to create tables for `recsys` database
+CREATE DATABASE IF NOT EXISTS `recsys`;
+USE `recsys`;
+
+-- Table: chat_log
+CREATE TABLE IF NOT EXISTS `chat_log` (
+  `id` INT(11) NOT NULL AUTO_INCREMENT,
+  `prompt` TEXT NOT NULL,
+  `response` TEXT NOT NULL,
+  `timestamp` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- Create `Projects` table
-CREATE TABLE `Projects` (
-  `_id` varchar(255) NOT NULL,
-  `title` varchar(255) NOT NULL,
-  `description` text DEFAULT NULL,
-  `owner_id` varchar(255) DEFAULT NULL,
-  `isDraft` tinyint(1) DEFAULT NULL,
-  `links` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`links`)),
-  `attachments` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`attachments`)),
-  `createdAt` datetime DEFAULT NULL,
-  `updatedAt` datetime DEFAULT NULL,
-  PRIMARY KEY (`_id`),
-  KEY `owner_id` (`owner_id`),
-  CONSTRAINT `projects_ibfk_1` FOREIGN KEY (`owner_id`) REFERENCES `Users` (`_id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- Create `Tags` table
-CREATE TABLE `Tags` (
-  `_id` varchar(255) NOT NULL,
-  `name` varchar(255) NOT NULL,
-  `type` varchar(50) DEFAULT NULL,
-  `createdAt` datetime DEFAULT NULL,
-  `updatedAt` datetime DEFAULT NULL,
+-- Table: Projects
+CREATE TABLE IF NOT EXISTS `Projects` (
+  `_id` VARCHAR(255) NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `tags` LONGTEXT DEFAULT NULL,
+  `owner_id` VARCHAR(255) DEFAULT NULL,
+  `isDraft` TINYINT(1) DEFAULT NULL,
+  `links` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (JSON_VALID(`links`)),
+  `attachments` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (JSON_VALID(`attachments`)),
+  `createdAt` DATETIME DEFAULT NULL,
+  `updatedAt` DATETIME DEFAULT NULL,
   PRIMARY KEY (`_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- Create `Users` table
-CREATE TABLE `Users` (
-  `_id` varchar(255) NOT NULL,
-  `firstName` varchar(100) DEFAULT NULL,
-  `lastName` varchar(100) DEFAULT NULL,
-  `email` varchar(255) NOT NULL,
-  `username` varchar(100) NOT NULL,
-  `status` tinyint(1) DEFAULT NULL,
-  `userType` varchar(50) DEFAULT NULL,
-  `interestedTags` longtext CHARACTER SET utf8mb4 COLLATE=utf8mb4_bin DEFAULT NULL CHECK (json_valid(`interestedTags`)),
-  `interestedCourses` longtext CHARACTER SET utf8mb4 COLLATE=utf8mb4_bin DEFAULT NULL CHECK (json_valid(`interestedCourses`)),
-  `studyPrograms` longtext CHARACTER SET utf8mb4 COLLATE=utf8mb4_bin DEFAULT NULL CHECK (json_valid(`studyPrograms`)),
-  `isBlockedByAdmin` tinyint(1) DEFAULT NULL,
-  `createdAt` datetime DEFAULT NULL,
-  `updatedAt` datetime DEFAULT NULL,
-  PRIMARY KEY (`_id`),
-  UNIQUE KEY `email` (`email`),
-  UNIQUE KEY `username` (`username`)
+-- Table: Tags
+CREATE TABLE IF NOT EXISTS `Tags` (
+  `_id` VARCHAR(255) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `type` VARCHAR(50) DEFAULT NULL,
+  `createdAt` DATETIME DEFAULT NULL,
+  `updatedAt` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- Create `Project_Tags` table
-CREATE TABLE `Project_Tags` (
-  `project_id` varchar(255) NOT NULL,
-  `tag_id` varchar(255) NOT NULL,
-  PRIMARY KEY (`project_id`,`tag_id`),
-  KEY `tag_id` (`tag_id`),
-  CONSTRAINT `project_tags_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `Projects` (`_id`) ON DELETE CASCADE,
-  CONSTRAINT `project_tags_ibfk_2` FOREIGN KEY (`tag_id`) REFERENCES `Tags` (`_id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;```
+-- Table: Users
+CREATE TABLE IF NOT EXISTS `Users` (
+  `_id` VARCHAR(255) NOT NULL,
+  `firstName` VARCHAR(100) DEFAULT NULL,
+  `lastName` VARCHAR(100) DEFAULT NULL,
+  `email` VARCHAR(255) NOT NULL,
+  `username` VARCHAR(100) NOT NULL,
+  `status` TINYINT(1) DEFAULT NULL,
+  `userType` VARCHAR(50) DEFAULT NULL,
+  `interestedTags` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (JSON_VALID(`interestedTags`)),
+  `interestedCourses` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (JSON_VALID(`interestedCourses`)),
+  `studyPrograms` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (JSON_VALID(`studyPrograms`)),
+  `isBlockedByAdmin` TINYINT(1) DEFAULT NULL,
+  `createdAt` DATETIME DEFAULT NULL,
+  `updatedAt` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 ## Run the Application
 
