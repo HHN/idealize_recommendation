@@ -22,9 +22,10 @@ WORKDIR /app
 COPY . .
 
 # Install system dependencies for MySQL and other required packages
+# For Debian releases older or equal 8 = libmysqlclient-dev \
 RUN apt-get update && apt-get install -y \
     gcc \
-    libmysqlclient-dev \
+    default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -33,7 +34,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Expose the port (if your application serves something directly, otherwise this can be omitted)
 EXPOSE 8000
 
-ENV OPENAI_API_KEY=""
+# is added during runtime
+# ENV OPENAI_API_KEY=""
 
 # Command to run your script
-CMD ["python", "script.py"]
+# CMD ["python", "script.py"]
+CMD ["python", "main.py"]

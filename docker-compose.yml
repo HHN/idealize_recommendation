@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: maria-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+      MARIADB_DATABASE: recsys
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mariadb-admin --user=root --protocol=socket ping --silent",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 30
+    ports:
+      - "3306:3306" # MariaDB
+      - "8000:8000" # API - comment this if running outside docker
+
+  chatbot-api:
+    build: .
+    env_file:
+      - ./apikey.env
+    container_name: chatbot-api
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    network_mode: "service:mariadb"
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    environment:
+      SERVER_BASE_URL: "http://host.docker.internal:3000/api/"
+
+volumes:
+  db_data:

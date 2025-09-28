@@ -1,7 +1,19 @@
-fastapi==0.95.2
-pydantic>=1.6.2,<2.0.0
-requests==2.32.3
-pymysql==1.1.1
-uvicorn==0.30.6
-langchain==0.2.14
-openai==1.40.8
+fastapi
+pydantic
+requests
+pymysql
+uvicorn
+langchain
+openai
+
+langdetect
+langchain_community
+langchain_openai
+
+# fastapi==0.95.2
+# pydantic>=1.6.2,<2.0.0
+# requests==2.32.3
+# pymysql==1.1.1
+# uvicorn==0.30.6
+# langchain==0.2.14
+# openai==1.40.8
