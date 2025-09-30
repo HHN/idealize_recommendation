@@ -15,7 +15,7 @@
 import requests
 import pymysql
 import json
-import os
+import os, pathlib
 import sys
 import langdetect
 from datetime import datetime
@@ -59,7 +59,9 @@ def save_chat_to_db(prompt, response):
 def insert_data_from_api():
     import bearer_token
     
-    base_url = 'http://localhost:3000/api/'
+    # base_url = 'http://localhost:3000/' # previously base_url = 'http://localhost:3000/api/'
+    in_docker = pathlib.Path("/.dockerenv").exists()
+    base_url = "http://host.docker.internal:3000/" if in_docker else "http://localhost:3000/"
 
     headers = {
         'Authorization': f'Bearer {bearer_token.TOKEN}',
@@ -72,6 +74,7 @@ def insert_data_from_api():
 
     if response_projects.status_code != 200 or response_users.status_code != 200 or response_tags.status_code != 200:
         print("Failed to fetch data from the API")
+        print("Base URL:", base_url)
         return False
 
     projects = response_projects.json().get('projects', [])

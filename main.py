@@ -15,8 +15,21 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import sqlchatbot
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        # once ETL sync at startup
+        ok = sqlchatbot.insert_data_from_api()
+        print(f"Initial sync: {ok}")
+    except Exception as e:
+        print(f"Initial sync failed: {e}")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Define a Pydantic model class to meet the input requirements for the API
 class ChatRequest(BaseModel):
@@ -27,12 +40,12 @@ class ChatRequest(BaseModel):
 async def chatbot(request: ChatRequest):
     #return {"response": "Test response"}
 
-    sqlchatbot.main()
-    print("test")
-    user_message = request.message
+    # sqlchatbot.main()
+    # print("test")
+    # user_message = request.message # use it directly in the bot_response
     
     # Use the extracted message with your `run_langchain_query` function
-    bot_response = sqlchatbot.run_langchain_query(user_message)
+    bot_response = sqlchatbot.run_langchain_query(request.message)
     
     # Return the bot response as JSON
     return {"response": bot_response}
