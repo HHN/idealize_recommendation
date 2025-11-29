@@ -515,8 +515,8 @@ class RAGChatbot:
         # Set system prompt based on detected language
         if lang == 'de':
             specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
-                            - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück und gib keine Personen zurück, solange explizit nur nach Projekten gefragt wird.
-                            - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück und gib keine Projekte zurück, solange explizit nur nach einer Person gefragt wird.
+                            - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
+                            - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
                             - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
 
                             {
@@ -544,8 +544,8 @@ class RAGChatbot:
                             Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
         else:
             specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
-                            - When the request is about projects, return only the fields _id, title, and createdAt for each project and do not return any persons as long as only projects are explicitly requested.
-                            - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person and do not return any projects as long as only people are explicitly requested.
+                            - When the request is about projects, return only the fields _id, title, and createdAt for each project.
+                            - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
                             - In your response, I expect EXACTLY the following JSON format:
 
                             {
