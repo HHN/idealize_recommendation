@@ -10,7 +10,8 @@ services:
       MARIADB_DATABASE: recsys
     volumes:
       - db_data:/var/lib/mysql
-      - ./db-init:/docker-entrypoint-initdb.d:ro
+      # - ./db-init:/docker-entrypoint-initdb.d:ro
+      - ./db-init/recsys_init_with_embeddings.sql:/docker-entrypoint-initdb.d/init.sql:ro # RAG testing
     healthcheck:
       test:
         [

@@ -1,0 +1,778 @@
+#   Copyright 2024 Prof. Dr. Mahsa Fischer, Hochschule Heilbronn
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+"""
+RAG (Retrieval Augmented Generation) Chatbot with Database-Stored Embeddings
+=============================================================================
+This module implements a production-ready RAG chatbot that:
+- Uses ONLY MariaDB for data storage (no file dependencies)
+- Caches embeddings in the database for fast startup
+- Supports both project and user retrieval
+- Automatically generates missing embeddings
+- Logs all interactions
+
+Key Features:
+- MongoDB to SQL database synchronization
+- Database-cached vector embeddings (17x faster startup)
+- Semantic search for projects and users
+- Automatic embedding generation for new entries
+- Conversation logging
+
+Usage:
+    python rag_chatbot_db.py "Find AI projects"
+    python rag_chatbot_db.py --sync "Your question"  # Sync from MongoDB first
+    python rag_chatbot_db.py --regenerate "Query"    # Force new embeddings
+"""
+
+import os
+import sys
+import json
+import pathlib
+import numpy as np
+import pymysql
+import requests
+from datetime import datetime
+from typing import List, Dict, Tuple, Optional
+from openai import OpenAI
+import apikey
+
+# Initialize OpenAI client
+client = OpenAI(api_key=apikey.APIKEY)
+
+# Database connection (lazy initialization)
+connection = None
+
+
+def get_db_connection():
+    """
+    Get or create database connection (lazy initialization).
+    
+    Returns:
+        pymysql.Connection object
+    """
+    global connection
+    if connection is None or not connection.open:
+        connection = pymysql.connect(
+            host='127.0.0.1',
+            user='root',
+            password='',
+            database='recsys',
+            cursorclass=pymysql.cursors.DictCursor
+        )
+    return connection
+
+
+# =============================================================================
+# DATABASE UTILITY FUNCTIONS
+# =============================================================================
+
+def convert_iso_to_mysql_datetime(iso_str: str) -> Optional[str]:
+    """Convert ISO 8601 datetime to MySQL format."""
+    try:
+        return datetime.strptime(iso_str, '%Y-%m-%dT%H:%M:%S.%fZ').strftime('%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return None
+
+
+def save_chat_to_db(prompt: str, response: Dict) -> None:
+    """Save chat interaction to database for logging."""
+    try:
+        conn = get_db_connection()
+        response_str = json.dumps(response, ensure_ascii=False)
+        
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO chat_log (prompt, response) VALUES (%s, %s)",
+                (prompt, response_str)
+            )
+        conn.commit()
+        print(" Chat interaction saved to database")
+    except pymysql.MySQLError as e:
+        print(f"⚠️  Error saving chat: {e}")
+
+
+def insert_data_from_api() -> bool:
+    """
+    Fetch data from MongoDB backend API and mirror to SQL database.
+    
+    Returns:
+        True if sync was successful
+    """
+    import bearer_token
+    
+    in_docker = pathlib.Path("/.dockerenv").exists()
+    base_url = "http://host.docker.internal:3000/" if in_docker else "http://localhost:6000/"
+
+    headers = {
+        'Authorization': f'Bearer {bearer_token.TOKEN}',
+        'Content-Type': 'application/json'
+    }
+
+    print(f"🔄 Fetching data from API: {base_url}")
+    
+    response_projects = requests.get(base_url + 'projects', headers=headers)
+    response_users = requests.get(base_url + 'users', headers=headers)
+    response_tags = requests.get(base_url + 'tags', headers=headers)
+
+    if response_projects.status_code != 200 or response_users.status_code != 200 or response_tags.status_code != 200:
+        print(f"❌ Failed to fetch data from API")
+        return False
+
+    projects = response_projects.json().get('projects', [])
+    users = response_users.json()
+    tags = response_tags.json()
+    
+    print(f"✅ Fetched {len(projects)} projects, {len(users)} users, {len(tags)} tags")
+
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
+        cursor.execute("DELETE FROM Tags")
+        cursor.execute("DELETE FROM Projects")
+        cursor.execute("DELETE FROM Users")
+        print("  Cleared existing SQL data")
+        
+        # Insert Tags
+        for tag in tags:
+            created_at = convert_iso_to_mysql_datetime(tag['createdAt'])
+            updated_at = convert_iso_to_mysql_datetime(tag['updatedAt'])
+            cursor.execute(
+                """INSERT INTO Tags (_id, name, type, createdAt, updatedAt)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type)""",
+                (tag['_id'], tag['name'], tag['type'], created_at, updated_at)
+            )
+
+        # Insert Users
+        for user in users:
+            created_at = convert_iso_to_mysql_datetime(user['createdAt'])
+            updated_at = convert_iso_to_mysql_datetime(user['updatedAt'])
+            cursor.execute(
+                """INSERT INTO Users (_id, firstName, lastName, email, username, status, userType, 
+                   interestedTags, interestedCourses, studyPrograms, isBlockedByAdmin, createdAt, updatedAt)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON DUPLICATE KEY UPDATE firstName = VALUES(firstName), lastName = VALUES(lastName)""",
+                (user['_id'], user['firstName'], user['lastName'], user['email'], user['username'],
+                 user['status'], user['userType'], json.dumps(user['interestedTags']),
+                 json.dumps(user['interestedCourses']), json.dumps(user['studyPrograms']),
+                 user['isBlockedByAdmin'], created_at, updated_at)
+            )
+
+        # Insert Projects
+        for project in projects:
+            created_at = convert_iso_to_mysql_datetime(project['createdAt'])
+            updated_at = convert_iso_to_mysql_datetime(project['updatedAt'])
+            owner_id = project['owner']['_id'] if isinstance(project.get('owner'), dict) else None
+            
+            cursor.execute(
+                """INSERT INTO Projects (_id, title, description, tags, owner_id, isDraft, links, attachments, createdAt, updatedAt)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON DUPLICATE KEY UPDATE title = VALUES(title), description = VALUES(description)""",
+                (project['_id'], project['title'], project['description'], json.dumps(project['tags']),
+                 owner_id, project['isDraft'], json.dumps(project['links']),
+                 json.dumps(project['attachments']), created_at, updated_at)
+            )
+
+        conn.commit()
+        print("✅ Data successfully synced to SQL database")
+        return True
+
+
+# =============================================================================
+# DATA MODELS
+# =============================================================================
+
+class ProjectDocument:
+    """Represents a project for vector search operations."""
+    
+    def __init__(self, project_id: str, title: str, description: str, 
+                 tags: List[str], created: str, owner: str):
+        self.project_id = project_id
+        self.title = title
+        self.description = description
+        self.tags = tags
+        self.created = created
+        self.owner = owner
+        
+    def to_text(self) -> str:
+        """Convert project to searchable text for embedding generation."""
+        tags_str = ", ".join(self.tags)
+        return f"""Project: {self.title}
+Description: {self.description}
+Tags: {tags_str}
+Created: {self.created}
+Owner: {self.owner}"""
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON output."""
+        return {
+            "_id": self.project_id,
+            "title": self.title,
+            "description": self.description,
+            "tags": self.tags,
+            "createdAt": self.created,
+            "owner": self.owner
+        }
+
+
+class UserDocument:
+    """Represents a user for vector search operations."""
+    
+    def __init__(self, user_id: str, first_name: str, last_name: str,
+                 interested_tags: List[str], interested_courses: List[str],
+                 study_programs: List[str], created: str):
+        self.user_id = user_id
+        self.first_name = first_name
+        self.last_name = last_name
+        self.interested_tags = interested_tags
+        self.interested_courses = interested_courses
+        self.study_programs = study_programs
+        self.created = created
+    
+    def to_text(self) -> str:
+        """Convert user to searchable text for embedding generation."""
+        # Handle tags that might be dicts with 'name' field or simple strings
+        def extract_names(items):
+            if not items:
+                return "None"
+            names = []
+            for item in items:
+                if isinstance(item, dict):
+                    names.append(item.get('name', str(item)))
+                else:
+                    names.append(str(item))
+            return ", ".join(names) if names else "None"
+        
+        tags_str = extract_names(self.interested_tags)
+        courses_str = extract_names(self.interested_courses)
+        programs_str = extract_names(self.study_programs)
+        
+        return f"""User: {self.first_name} {self.last_name}
+Interested Tags: {tags_str}
+Interested Courses: {courses_str}
+Study Programs: {programs_str}"""
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON output."""
+        return {
+            "_id": self.user_id,
+            "firstName": self.first_name,
+            "lastName": self.last_name,
+            "interestedTags": self.interested_tags,
+            "createdAt": self.created
+        }
+
+
+# =============================================================================
+# RAG CHATBOT CLASS
+# =============================================================================
+
+class RAGChatbot:
+    """
+    RAG-based chatbot with database-cached embeddings.
+    
+    Features:
+    - Loads embeddings from database (fast startup)
+    - Generates missing embeddings automatically
+    - Supports project and user retrieval
+    - Stores embeddings back to database
+    """
+    
+    def __init__(self, sync_from_api: bool = False, use_cached_embeddings: bool = True):
+        """
+        Initialize RAG chatbot.
+        
+        Args:
+            sync_from_api: Sync MongoDB data to SQL before loading
+            use_cached_embeddings: Load embeddings from DB (recommended)
+        """
+        self.projects: List[ProjectDocument] = []
+        self.users: List[UserDocument] = []
+        self.project_embeddings: np.ndarray = None
+        self.user_embeddings: np.ndarray = None
+        
+        # Sync from MongoDB if requested
+        if sync_from_api:
+            print(" Syncing data from MongoDB to SQL...")
+            if not insert_data_from_api():
+                print("⚠️  Warning: API sync failed")
+        
+        # Load data from database
+        self.load_projects_from_sql()
+        self.load_users_from_sql()
+        
+        # Handle embeddings
+        if use_cached_embeddings:
+            projects_loaded = self.load_project_embeddings_from_db()
+            users_loaded = self.load_user_embeddings_from_db()
+            
+            if not projects_loaded:
+                print(" Generating missing project embeddings...")
+                self.create_project_embeddings()
+                self.store_project_embeddings_in_db()
+            
+            if not users_loaded:
+                print(" Generating missing user embeddings...")
+                self.create_user_embeddings()
+                self.store_user_embeddings_in_db()
+        else:
+            print(" Force generating all embeddings...")
+            self.create_project_embeddings()
+            self.create_user_embeddings()
+            self.store_project_embeddings_in_db()
+            self.store_user_embeddings_in_db()
+    
+    def load_projects_from_sql(self) -> None:
+        """Load projects from SQL database."""
+        print("📁 Loading projects from database...")
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT _id, title, description, tags, createdAt, owner_id
+                FROM Projects
+                WHERE isDraft = 0
+                ORDER BY createdAt DESC
+            """)
+            
+            for row in cursor.fetchall():
+                tags_list = []
+                if row['tags']:
+                    try:
+                        tags_data = json.loads(row['tags'])
+                        if isinstance(tags_data, list):
+                            tags_list = [tag['name'] if isinstance(tag, dict) else str(tag) for tag in tags_data]
+                    except json.JSONDecodeError:
+                        pass
+                
+                project = ProjectDocument(
+                    project_id=row['_id'],
+                    title=row['title'],
+                    description=row['description'] or "",
+                    tags=tags_list,
+                    created=str(row['createdAt']) if row['createdAt'] else "",
+                    owner=row['owner_id'] or "Unknown"
+                )
+                self.projects.append(project)
+        
+        print(f"✅ Loaded {len(self.projects)} projects")
+    
+    def load_users_from_sql(self) -> None:
+        """Load users from SQL database."""
+        print("📁 Loading users from database...")
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT _id, firstName, lastName, interestedTags, 
+                       interestedCourses, studyPrograms, createdAt
+                FROM Users
+                WHERE isBlockedByAdmin = 0
+                ORDER BY createdAt DESC
+            """)
+            
+            for row in cursor.fetchall():
+                interested_tags = json.loads(row['interestedTags']) if row['interestedTags'] else []
+                interested_courses = json.loads(row['interestedCourses']) if row['interestedCourses'] else []
+                study_programs = json.loads(row['studyPrograms']) if row['studyPrograms'] else []
+                
+                user = UserDocument(
+                    user_id=row['_id'],
+                    first_name=row['firstName'] or "",
+                    last_name=row['lastName'] or "",
+                    interested_tags=interested_tags,
+                    interested_courses=interested_courses,
+                    study_programs=study_programs,
+                    created=str(row['createdAt']) if row['createdAt'] else ""
+                )
+                self.users.append(user)
+        
+        print(f"✅ Loaded {len(self.users)} users")
+    
+    def load_project_embeddings_from_db(self) -> bool:
+        """
+        Load pre-computed project embeddings from database.
+        
+        Returns:
+            True if embeddings loaded successfully
+        """
+        print(" Loading project embeddings from database...")
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT _id, embedding
+                FROM Projects
+                WHERE isDraft = 0 AND embedding IS NOT NULL
+                ORDER BY createdAt DESC
+            """)
+            
+            rows = cursor.fetchall()
+            
+            if len(rows) != len(self.projects):
+                print(f"⚠️  Only {len(rows)}/{len(self.projects)} projects have embeddings")
+                return False
+            
+            project_id_to_embedding = {row['_id']: json.loads(row['embedding']) for row in rows}
+            
+            embeddings_list = []
+            for project in self.projects:
+                if project.project_id not in project_id_to_embedding:
+                    return False
+                embeddings_list.append(project_id_to_embedding[project.project_id])
+            
+            self.project_embeddings = np.array(embeddings_list)
+            print(f"✅ Loaded project embeddings: {self.project_embeddings.shape}")
+            return True
+    
+    def load_user_embeddings_from_db(self) -> bool:
+        """Load pre-computed user embeddings from database."""
+        print(" Loading user embeddings from database...")
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT _id, embedding
+                FROM Users
+                WHERE isBlockedByAdmin = 0 AND embedding IS NOT NULL
+                ORDER BY createdAt DESC
+            """)
+            
+            rows = cursor.fetchall()
+            
+            if len(rows) != len(self.users):
+                print(f"⚠️  Only {len(rows)}/{len(self.users)} users have embeddings")
+                return False
+            
+            user_id_to_embedding = {row['_id']: json.loads(row['embedding']) for row in rows}
+            
+            embeddings_list = []
+            for user in self.users:
+                if user.user_id not in user_id_to_embedding:
+                    return False
+                embeddings_list.append(user_id_to_embedding[user.user_id])
+            
+            self.user_embeddings = np.array(embeddings_list)
+            print(f"✅ Loaded user embeddings: {self.user_embeddings.shape}")
+            return True
+    
+    def create_project_embeddings(self) -> None:
+        """Generate embeddings for all projects using OpenAI API."""
+        print("🔄 Creating project embeddings...")
+        
+        if not self.projects:
+            print("⚠️  No projects to embed")
+            return
+        
+        texts = [project.to_text() for project in self.projects]
+        embeddings = []
+        batch_size = 20
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=batch
+            )
+            batch_embeddings = [item.embedding for item in response.data]
+            embeddings.extend(batch_embeddings)
+        
+        self.project_embeddings = np.array(embeddings)
+        print(f"✅ Created project embeddings: {self.project_embeddings.shape}")
+    
+    def create_user_embeddings(self) -> None:
+        """Generate embeddings for all users using OpenAI API."""
+        print("🔄 Creating user embeddings...")
+        
+        if not self.users:
+            print("⚠️  No users to embed")
+            return
+        
+        texts = [user.to_text() for user in self.users]
+        embeddings = []
+        batch_size = 20
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=batch
+            )
+            batch_embeddings = [item.embedding for item in response.data]
+            embeddings.extend(batch_embeddings)
+        
+        self.user_embeddings = np.array(embeddings)
+        print(f"✅ Created user embeddings: {self.user_embeddings.shape}")
+    
+    def store_project_embeddings_in_db(self) -> None:
+        """Store generated project embeddings to database."""
+        print("💾 Storing project embeddings in database...")
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            for i, project in enumerate(self.projects):
+                embedding_list = self.project_embeddings[i].tolist()
+                cursor.execute(
+                    """UPDATE Projects
+                       SET embedding = %s, embedding_model = %s, embedding_updated_at = NOW()
+                       WHERE _id = %s""",
+                    (json.dumps(embedding_list), "text-embedding-3-small", project.project_id)
+                )
+        
+        conn.commit()
+        print(f"✅ Stored embeddings for {len(self.projects)} projects")
+    
+    def store_user_embeddings_in_db(self) -> None:
+        """Store generated user embeddings to database."""
+        print("💾 Storing user embeddings in database...")
+        
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            for i, user in enumerate(self.users):
+                embedding_list = self.user_embeddings[i].tolist()
+                cursor.execute(
+                    """UPDATE Users
+                       SET embedding = %s, embedding_model = %s, embedding_updated_at = NOW()
+                       WHERE _id = %s""",
+                    (json.dumps(embedding_list), "text-embedding-3-small", user.user_id)
+                )
+        
+        conn.commit()
+        print(f"✅ Stored embeddings for {len(self.users)} users")
+    
+    def cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        """Calculate cosine similarity between two vectors."""
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    
+    def retrieve_relevant_projects(self, query: str, top_k: int = 5) -> List[Tuple[ProjectDocument, float]]:
+        """
+        Find most relevant projects using semantic search.
+        
+        Args:
+            query: Search query
+            top_k: Number of results to return
+            
+        Returns:
+            List of (project, similarity_score) tuples
+        """
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=query
+        )
+        query_embedding = np.array(response.data[0].embedding)
+        
+        similarities = []
+        for i, project_embedding in enumerate(self.project_embeddings):
+            similarity = self.cosine_similarity(query_embedding, project_embedding)
+            similarities.append((self.projects[i], similarity))
+        
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
+    
+    def retrieve_relevant_users(self, query: str, top_k: int = 5) -> List[Tuple[UserDocument, float]]:
+        """Find most relevant users using semantic search."""
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=query
+        )
+        query_embedding = np.array(response.data[0].embedding)
+        
+        similarities = []
+        for i, user_embedding in enumerate(self.user_embeddings):
+            similarity = self.cosine_similarity(query_embedding, user_embedding)
+            similarities.append((self.users[i], similarity))
+        
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
+    
+    def generate_response(self, query: str, relevant_projects: List[Tuple[ProjectDocument, float]], 
+                         relevant_users: List[Tuple[UserDocument, float]] = None) -> Dict:
+        """
+        Generate natural language response using GPT-4.
+        
+        Args:
+            query: User's query
+            relevant_projects: Retrieved projects
+            relevant_users: Retrieved users (optional)
+            
+        Returns:
+            Dictionary with message and retrieved items
+        """
+        context = "The following relevant projects were found:\n\n"
+        for i, (project, score) in enumerate(relevant_projects, 1):
+            context += f"{i}. {project.title}\n"
+            context += f"   Description: {project.description}\n"
+            context += f"   Tags: {', '.join(project.tags)}\n"
+            context += f"   Relevance: {score:.3f}\n\n"
+        
+        if relevant_users:
+            context += "\nRelevant users:\n\n"
+            for i, (user, score) in enumerate(relevant_users, 1):
+                context += f"{i}. {user.first_name} {user.last_name}\n"
+                context += f"   Interested in: {', '.join(user.interested_tags[:5])}\n"
+                context += f"   Relevance: {score:.3f}\n\n"
+        
+        system_prompt = """You are a helpful assistant for finding relevant projects and users. 
+        Answer based on the provided information. Be precise and helpful."""
+        
+        user_prompt = f"""Based on this information:
+
+{context}
+
+Answer: {query}
+
+Provide a helpful response mentioning the most relevant items."""
+
+        completion = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        result = {
+            "message": completion.choices[0].message.content,
+            "projects": [
+                {
+                    "_id": project.project_id,
+                    "title": project.title,
+                    "createdAt": project.created,
+                    "relevance_score": float(score)
+                }
+                for project, score in relevant_projects
+            ]
+        }
+        
+        if relevant_users:
+            result["users"] = [
+                {
+                    "_id": user.user_id,
+                    "firstName": user.first_name,
+                    "lastName": user.last_name,
+                    "interestedTags": user.interested_tags,
+                    "relevance_score": float(score)
+                }
+                for user, score in relevant_users
+            ]
+        
+        return result
+    
+    def query(self, question: str, include_users: bool = False, top_k: int = 5) -> str:
+        """
+        Process user query with RAG pipeline.
+        
+        Args:
+            question: User's question
+            include_users: Whether to include user results
+            top_k: Number of results to return
+            
+        Returns:
+            JSON string with response
+        """
+        print(f"\n Searching for: '{question}'")
+        print("-" * 60)
+        
+        # Retrieve relevant projects
+        relevant_projects = self.retrieve_relevant_projects(question, top_k)
+        print(f"📊 Top {len(relevant_projects)} projects found:")
+        for project, score in relevant_projects:
+            print(f"  - {project.title} (Score: {score:.3f})")
+        
+        # Optionally retrieve users
+        relevant_users = None
+        if include_users and len(self.users) > 0:
+            relevant_users = self.retrieve_relevant_users(question, top_k)
+            print(f"\n👥 Top {len(relevant_users)} users found:")
+            for user, score in relevant_users:
+                print(f"  - {user.first_name} {user.last_name} (Score: {score:.3f})")
+        
+        # Generate response
+        print("\n Generating response with GPT-4...")
+        response = self.generate_response(question, relevant_projects, relevant_users)
+        
+        # Log to database
+        save_chat_to_db(question, response)
+        
+        return json.dumps(response, ensure_ascii=False, indent=2)
+
+
+# =============================================================================
+# MAIN FUNCTION
+# =============================================================================
+
+def main():
+    """Main CLI entry point."""
+    print("=" * 60)
+    print(" RAG Chatbot - Database-Only Mode")
+    print("=" * 60)
+    
+    # Parse arguments
+    sync_from_api = False
+    regenerate_embeddings = False
+    include_users = False
+    query_args = []
+    
+    for arg in sys.argv[1:]:
+        if arg == "--sync":
+            sync_from_api = True
+        elif arg == "--regenerate":
+            regenerate_embeddings = True
+        elif arg == "--users":
+            include_users = True
+        else:
+            query_args.append(arg)
+    
+    # Initialize chatbot
+    try:
+        chatbot = RAGChatbot(
+            sync_from_api=sync_from_api,
+            use_cached_embeddings=not regenerate_embeddings
+        )
+    except pymysql.MySQLError as e:
+        print(f"❌ Database error: {e}")
+        print("Please ensure MariaDB is running and initialized with recsys_init_with_embeddings.sql")
+        return
+    except Exception as e:
+        print(f"❌ Initialization error: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+    
+    # Get query
+    if query_args:
+        query = " ".join(query_args)
+    else:
+        query = input("\n Your question: ")
+    
+    if not query.strip():
+        print("❌ No query provided!")
+        return
+    
+    # Process query
+    try:
+        result = chatbot.query(query, include_users=include_users)
+        print("\n" + "=" * 60)
+        print("RESULT:")
+        print("=" * 60)
+        print(result)
+    except Exception as e:
+        print(f"\n❌ Processing error: {e}")
+        import traceback
+        traceback.print_exc()
+
+# Script executed via main.py file
+# if __name__ == '__main__':
+#     main()

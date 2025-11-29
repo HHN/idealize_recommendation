@@ -5,6 +5,7 @@ pymysql
 uvicorn
 langchain
 openai
+numpy
 
 langdetect
 langchain_community
