@@ -15,33 +15,31 @@
 """
 RAG (Retrieval Augmented Generation) Chatbot with Database-Stored Embeddings
 =============================================================================
-This module implements a production-ready RAG chatbot that:
+This module implements a production-ready RAG chatbot for FastAPI integration that:
 - Uses ONLY MariaDB for data storage (no file dependencies)
-- Caches embeddings in the database for fast startup
+- Generates fresh embeddings on each request for maximum accuracy
 - Supports both project and user retrieval
-- Automatically generates missing embeddings
 - Logs all interactions
 
 Key Features:
 - MongoDB to SQL database synchronization
-- Database-cached vector embeddings (17x faster startup)
 - Semantic search for projects and users
-- Automatic embedding generation for new entries
+- Real-time embedding generation
 - Conversation logging
+- FastAPI-ready JSON response format
 
 Usage:
-    python rag_chatbot_db.py "Find AI projects"
-    python rag_chatbot_db.py --sync "Your question"  # Sync from MongoDB first
-    python rag_chatbot_db.py --regenerate "Query"    # Force new embeddings
+    Called from main.py FastAPI endpoint:
+    result = rag_chatbot.query_projects(message)
 """
 
 import os
-import sys
 import json
 import pathlib
 import numpy as np
 import pymysql
 import requests
+import langdetect
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from openai import OpenAI
@@ -288,49 +286,25 @@ class RAGChatbot:
     - Stores embeddings back to database
     """
     
-    def __init__(self, sync_from_api: bool = False, use_cached_embeddings: bool = True):
+    def __init__(self):
         """
         Initialize RAG chatbot.
-        
-        Args:
-            sync_from_api: Sync MongoDB data to SQL before loading
-            use_cached_embeddings: Load embeddings from DB (recommended)
+        Loads projects and users from database.
+        Embeddings are generated fresh on each query.
         """
         self.projects: List[ProjectDocument] = []
         self.users: List[UserDocument] = []
         self.project_embeddings: np.ndarray = None
         self.user_embeddings: np.ndarray = None
         
-        # Sync from MongoDB if requested
-        if sync_from_api:
-            print(" Syncing data from MongoDB to SQL...")
-            if not insert_data_from_api():
-                print("⚠️  Warning: API sync failed")
-        
         # Load data from database
         self.load_projects_from_sql()
         self.load_users_from_sql()
         
-        # Handle embeddings
-        if use_cached_embeddings:
-            projects_loaded = self.load_project_embeddings_from_db()
-            users_loaded = self.load_user_embeddings_from_db()
-            
-            if not projects_loaded:
-                print(" Generating missing project embeddings...")
-                self.create_project_embeddings()
-                self.store_project_embeddings_in_db()
-            
-            if not users_loaded:
-                print(" Generating missing user embeddings...")
-                self.create_user_embeddings()
-                self.store_user_embeddings_in_db()
-        else:
-            print(" Force generating all embeddings...")
-            self.create_project_embeddings()
-            self.create_user_embeddings()
-            self.store_project_embeddings_in_db()
-            self.store_user_embeddings_in_db()
+        # Generate embeddings fresh
+        print("🔄 Generating fresh embeddings...")
+        self.create_project_embeddings()
+        self.create_user_embeddings()
     
     def load_projects_from_sql(self) -> None:
         """Load projects from SQL database."""
@@ -399,73 +373,7 @@ class RAGChatbot:
         
         print(f"✅ Loaded {len(self.users)} users")
     
-    def load_project_embeddings_from_db(self) -> bool:
-        """
-        Load pre-computed project embeddings from database.
-        
-        Returns:
-            True if embeddings loaded successfully
-        """
-        print(" Loading project embeddings from database...")
-        
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT _id, embedding
-                FROM Projects
-                WHERE isDraft = 0 AND embedding IS NOT NULL
-                ORDER BY createdAt DESC
-            """)
-            
-            rows = cursor.fetchall()
-            
-            if len(rows) != len(self.projects):
-                print(f"⚠️  Only {len(rows)}/{len(self.projects)} projects have embeddings")
-                return False
-            
-            project_id_to_embedding = {row['_id']: json.loads(row['embedding']) for row in rows}
-            
-            embeddings_list = []
-            for project in self.projects:
-                if project.project_id not in project_id_to_embedding:
-                    return False
-                embeddings_list.append(project_id_to_embedding[project.project_id])
-            
-            self.project_embeddings = np.array(embeddings_list)
-            print(f"✅ Loaded project embeddings: {self.project_embeddings.shape}")
-            return True
-    
-    def load_user_embeddings_from_db(self) -> bool:
-        """Load pre-computed user embeddings from database."""
-        print(" Loading user embeddings from database...")
-        
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT _id, embedding
-                FROM Users
-                WHERE isBlockedByAdmin = 0 AND embedding IS NOT NULL
-                ORDER BY createdAt DESC
-            """)
-            
-            rows = cursor.fetchall()
-            
-            if len(rows) != len(self.users):
-                print(f"⚠️  Only {len(rows)}/{len(self.users)} users have embeddings")
-                return False
-            
-            user_id_to_embedding = {row['_id']: json.loads(row['embedding']) for row in rows}
-            
-            embeddings_list = []
-            for user in self.users:
-                if user.user_id not in user_id_to_embedding:
-                    return False
-                embeddings_list.append(user_id_to_embedding[user.user_id])
-            
-            self.user_embeddings = np.array(embeddings_list)
-            print(f"✅ Loaded user embeddings: {self.user_embeddings.shape}")
-            return True
-    
+
     def create_project_embeddings(self) -> None:
         """Generate embeddings for all projects using OpenAI API."""
         print("🔄 Creating project embeddings...")
@@ -514,42 +422,7 @@ class RAGChatbot:
         self.user_embeddings = np.array(embeddings)
         print(f"✅ Created user embeddings: {self.user_embeddings.shape}")
     
-    def store_project_embeddings_in_db(self) -> None:
-        """Store generated project embeddings to database."""
-        print("💾 Storing project embeddings in database...")
-        
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            for i, project in enumerate(self.projects):
-                embedding_list = self.project_embeddings[i].tolist()
-                cursor.execute(
-                    """UPDATE Projects
-                       SET embedding = %s, embedding_model = %s, embedding_updated_at = NOW()
-                       WHERE _id = %s""",
-                    (json.dumps(embedding_list), "text-embedding-3-small", project.project_id)
-                )
-        
-        conn.commit()
-        print(f"✅ Stored embeddings for {len(self.projects)} projects")
-    
-    def store_user_embeddings_in_db(self) -> None:
-        """Store generated user embeddings to database."""
-        print("💾 Storing user embeddings in database...")
-        
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            for i, user in enumerate(self.users):
-                embedding_list = self.user_embeddings[i].tolist()
-                cursor.execute(
-                    """UPDATE Users
-                       SET embedding = %s, embedding_model = %s, embedding_updated_at = NOW()
-                       WHERE _id = %s""",
-                    (json.dumps(embedding_list), "text-embedding-3-small", user.user_id)
-                )
-        
-        conn.commit()
-        print(f"✅ Stored embeddings for {len(self.users)} users")
-    
+
     def cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """Calculate cosine similarity between two vectors."""
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
@@ -598,7 +471,7 @@ class RAGChatbot:
     def generate_response(self, query: str, relevant_projects: List[Tuple[ProjectDocument, float]], 
                          relevant_users: List[Tuple[UserDocument, float]] = None) -> Dict:
         """
-        Generate natural language response using GPT-4.
+        Generate natural language response using GPT-4-turbo with language detection.
         
         Args:
             query: User's query
@@ -606,8 +479,12 @@ class RAGChatbot:
             relevant_users: Retrieved users (optional)
             
         Returns:
-            Dictionary with message and retrieved items
+            Dictionary with message and retrieved items in sqlchatbot.py compatible format
         """
+        # Detect language
+        lang = langdetect.detect(query)
+        
+        # Build context with retrieved information
         context = "The following relevant projects were found:\n\n"
         for i, (project, score) in enumerate(relevant_projects, 1):
             context += f"{i}. {project.title}\n"
@@ -619,160 +496,219 @@ class RAGChatbot:
             context += "\nRelevant users:\n\n"
             for i, (user, score) in enumerate(relevant_users, 1):
                 context += f"{i}. {user.first_name} {user.last_name}\n"
-                context += f"   Interested in: {', '.join(user.interested_tags[:5])}\n"
+                # Extract tag names from interested_tags
+                def extract_names(items):
+                    if not items:
+                        return []
+                    names = []
+                    for item in items:
+                        if isinstance(item, dict):
+                            names.append(item.get('name', str(item)))
+                        else:
+                            names.append(str(item))
+                    return names
+                
+                tag_names = extract_names(user.interested_tags[:5])
+                context += f"   Interested in: {', '.join(tag_names)}\n"
                 context += f"   Relevance: {score:.3f}\n\n"
         
-        system_prompt = """You are a helpful assistant for finding relevant projects and users. 
-        Answer based on the provided information. Be precise and helpful."""
+        # Set system prompt based on detected language
+        if lang == 'de':
+            specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
+                            - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
+                            - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
+                            - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
+
+                            {
+                            "message": "Dein Antworttext",
+                            "projects": [
+                                {
+                                "_id": "objectID",
+                                "title": "Projektname",
+                                "createdAt": "2024-10-21 10:30:00"
+                                }
+                            ],
+                            "users": [
+                                {
+                                "_id": "objectID",
+                                "firstName": "Vorname",
+                                "lastName": "Nachname",
+                                "interestedTags": ["Tag1", "Tag2"]
+                                }
+                            ]
+                            }
+
+                            Außerdem gib nur den Output zurück; nichts vom Input
+                            Falls keine Projekte oder Personen in der Anfrage relevant sind, lass die entsprechenden Listen leer.
+
+                            Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
+        else:
+            specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
+                            - When the request is about projects, return only the fields _id, title, and createdAt for each project.
+                            - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
+                            - In your response, I expect EXACTLY the following JSON format:
+
+                            {
+                            "message": "Your response text",
+                            "projects": [
+                                {
+                                "_id": "objectID",
+                                "title": "Project name",
+                                "createdAt": "2024-10-21 10:30:00"
+                                }
+                            ],
+                            "users": [
+                                {
+                                "_id": "objectID",
+                                "firstName": "First name",
+                                "lastName": "Last name",
+                                "interestedTags": ["Tag1", "Tag2"]
+                                }
+                            ]
+                            }
+
+                            Also, only return the output; nothing from the input.
+                            If no projects or people are relevant in the request, leave the corresponding lists empty.
+
+                            Do not use confidential data such as passwords, email addresses, or codes in the response.
+
+                            Always answer in the same language as the following request:"""
         
-        user_prompt = f"""Based on this information:
-
-{context}
-
-Answer: {query}
-
-Provide a helpful response mentioning the most relevant items."""
+            # Combine specific prompt with context and query
+            user_prompt = f"""{specific_prompt}
+                        Based on this information:
+                        {context}
+                        Answer: {query}"""
 
         completion = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4-turbo",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": "You are a helpful assistant for finding relevant projects and users. Answer based on the provided information. Be precise and helpful."},
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
             max_tokens=500
         )
         
+        # Return in sqlchatbot.py compatible format (without relevance_score field)
         result = {
             "message": completion.choices[0].message.content,
             "projects": [
                 {
                     "_id": project.project_id,
                     "title": project.title,
-                    "createdAt": project.created,
-                    "relevance_score": float(score)
+                    "createdAt": project.created
                 }
                 for project, score in relevant_projects
             ]
         }
         
         if relevant_users:
+            # Extract tag names for users
+            def extract_tag_names(items):
+                if not items:
+                    return []
+                names = []
+                for item in items:
+                    if isinstance(item, dict):
+                        names.append(item.get('name', str(item)))
+                    else:
+                        names.append(str(item))
+                return names
+            
             result["users"] = [
                 {
                     "_id": user.user_id,
                     "firstName": user.first_name,
                     "lastName": user.last_name,
-                    "interestedTags": user.interested_tags,
-                    "relevance_score": float(score)
+                    "interestedTags": extract_tag_names(user.interested_tags)
                 }
                 for user, score in relevant_users
             ]
+        else:
+            result["users"] = []
         
         return result
     
-    def query(self, question: str, include_users: bool = False, top_k: int = 5) -> str:
+    def query(self, question: str, top_k: int = 5) -> Dict:
         """
         Process user query with RAG pipeline.
         
         Args:
             question: User's question
-            include_users: Whether to include user results
             top_k: Number of results to return
             
         Returns:
-            JSON string with response
+            Dictionary with response (compatible with sqlchatbot.py format)
         """
-        print(f"\n Searching for: '{question}'")
-        print("-" * 60)
+        print(f"\n🔍 Searching for: '{question}'")
         
         # Retrieve relevant projects
         relevant_projects = self.retrieve_relevant_projects(question, top_k)
-        print(f"📊 Top {len(relevant_projects)} projects found:")
-        for project, score in relevant_projects:
-            print(f"  - {project.title} (Score: {score:.3f})")
+        print(f"📊 Found {len(relevant_projects)} relevant projects")
         
-        # Optionally retrieve users
+        # Retrieve users (optional, can be disabled if not needed)
         relevant_users = None
-        if include_users and len(self.users) > 0:
+        if len(self.users) > 0:
             relevant_users = self.retrieve_relevant_users(question, top_k)
-            print(f"\n👥 Top {len(relevant_users)} users found:")
-            for user, score in relevant_users:
-                print(f"  - {user.first_name} {user.last_name} (Score: {score:.3f})")
+            print(f"👥 Found {len(relevant_users)} relevant users")
         
         # Generate response
-        print("\n Generating response with GPT-4...")
+        print("💬 Generating response with GPT-4...")
         response = self.generate_response(question, relevant_projects, relevant_users)
         
         # Log to database
         save_chat_to_db(question, response)
         
-        return json.dumps(response, ensure_ascii=False, indent=2)
+        return response
 
 
 # =============================================================================
-# MAIN FUNCTION
+# API ENTRY POINT
 # =============================================================================
 
-def main():
-    """Main CLI entry point."""
-    print("=" * 60)
-    print(" RAG Chatbot - Database-Only Mode")
-    print("=" * 60)
+def query_projects(message: str) -> str:
+    """
+    Main entry point for FastAPI integration.
+    Creates fresh chatbot instance and processes query.
     
-    # Parse arguments
-    sync_from_api = False
-    regenerate_embeddings = False
-    include_users = False
-    query_args = []
-    
-    for arg in sys.argv[1:]:
-        if arg == "--sync":
-            sync_from_api = True
-        elif arg == "--regenerate":
-            regenerate_embeddings = True
-        elif arg == "--users":
-            include_users = True
-        else:
-            query_args.append(arg)
-    
-    # Initialize chatbot
+    Args:
+        message: User's query message
+        
+    Returns:
+        JSON string with response in sqlchatbot.py compatible format:
+        {
+            "message": "Response text",
+            "projects": [{"_id": "...", "title": "...", "createdAt": "..."}],
+            "users": [{"_id": "...", "firstName": "...", "lastName": "...", "interestedTags": [...]}]
+        }
+    """
     try:
-        chatbot = RAGChatbot(
-            sync_from_api=sync_from_api,
-            use_cached_embeddings=not regenerate_embeddings
-        )
-    except pymysql.MySQLError as e:
-        print(f"❌ Database error: {e}")
-        print("Please ensure MariaDB is running and initialized with recsys_init_with_embeddings.sql")
-        return
-    except Exception as e:
-        print(f"❌ Initialization error: {e}")
-        import traceback
-        traceback.print_exc()
-        return
-    
-    # Get query
-    if query_args:
-        query = " ".join(query_args)
-    else:
-        query = input("\n Your question: ")
-    
-    if not query.strip():
-        print("❌ No query provided!")
-        return
-    
-    # Process query
-    try:
-        result = chatbot.query(query, include_users=include_users)
-        print("\n" + "=" * 60)
-        print("RESULT:")
         print("=" * 60)
-        print(result)
+        print("🚀 RAG Chatbot Query")
+        print("=" * 60)
+        
+        # Create fresh chatbot instance (generates new embeddings)
+        chatbot = RAGChatbot()
+        
+        # Process query
+        result = chatbot.query(message, top_k=5)
+        
+        print("✅ Query completed successfully")
+        print("=" * 60)
+        
+        # Return as JSON string (like sqlchatbot.py)
+        return json.dumps(result, ensure_ascii=False, separators=(',', ':'))
+        
     except Exception as e:
-        print(f"\n❌ Processing error: {e}")
+        print(f"❌ Error processing query: {e}")
         import traceback
         traceback.print_exc()
-
-# Script executed via main.py file
-# if __name__ == '__main__':
-#     main()
+        
+        # Return error in expected format
+        error_response = {
+            "message": f"Error: {str(e)}",
+            "projects": [],
+            "users": []
+        }
+        return json.dumps(error_response, ensure_ascii=False, separators=(',', ':'))

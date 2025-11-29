@@ -52,15 +52,9 @@ class ChatRequest(BaseModel):
 # Create an API endpoint that accepts POST requests
 @app.post("/api/chatbot")
 async def chatbot(request: ChatRequest):
-    #return {"response": "Test response"}
-
-    # sqlchatbot.main()
-    # print("test")
-    # user_message = request.message # use it directly in the bot_response
-    
-    # Use the extracted message with your `run_langchain_query` function
+    # Use RAG chatbot to process the query
     # bot_response = sqlchatbot.run_langchain_query(request.message) # Old with sqlagent
-    bot_response = rag_chatbot.main(request.message)
+    bot_response = rag_chatbot.query_projects(request.message)
     # Return the bot response as JSON
     return {"response": bot_response}
 
