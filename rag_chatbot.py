@@ -515,8 +515,8 @@ class RAGChatbot:
         # Set system prompt based on detected language
         if lang == 'de':
             specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
-                            - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
-                            - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
+                            - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück und gib keine Personen zurück, solange explizit nur nach Projekten gefragt wird.
+                            - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück und gib keine Projekte zurück, solange explizit nur nach einer Person gefragt wird.
                             - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
 
                             {
@@ -544,8 +544,8 @@ class RAGChatbot:
                             Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
         else:
             specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
-                            - When the request is about projects, return only the fields _id, title, and createdAt for each project.
-                            - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
+                            - When the request is about projects, return only the fields _id, title, and createdAt for each project and do not return any persons as long as only projects are explicitly requested.
+                            - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person and do not return any projects as long as only people are explicitly requested.
                             - In your response, I expect EXACTLY the following JSON format:
 
                             {
@@ -590,21 +590,25 @@ class RAGChatbot:
             max_tokens=500
         )
         
-        # Return in sqlchatbot.py compatible format (without relevance_score field)
-        result = {
-            "message": completion.choices[0].message.content,
-            "projects": [
-                {
-                    "_id": project.project_id,
-                    "title": project.title,
-                    "createdAt": project.created
-                }
-                for project, score in relevant_projects
-            ]
-        }
-        
-        if relevant_users:
-            # Extract tag names for users
+        # Parse the JSON response from GPT-4-turbo
+        try:
+            result = json.loads(completion.choices[0].message.content)
+            
+            # Ensure the response has the required structure
+            if "message" not in result:
+                result["message"] = "Response generated successfully"
+            if "projects" not in result:
+                result["projects"] = []
+            if "users" not in result:
+                result["users"] = []
+                
+            return result
+            
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Failed to parse GPT-4 response as JSON: {e}")
+            print(f"Raw response: {completion.choices[0].message.content}")
+            
+            # Fallback: return structured data manually
             def extract_tag_names(items):
                 if not items:
                     return []
@@ -616,19 +620,28 @@ class RAGChatbot:
                         names.append(str(item))
                 return names
             
-            result["users"] = [
-                {
-                    "_id": user.user_id,
-                    "firstName": user.first_name,
-                    "lastName": user.last_name,
-                    "interestedTags": extract_tag_names(user.interested_tags)
-                }
-                for user, score in relevant_users
-            ]
-        else:
-            result["users"] = []
-        
-        return result
+            result = {
+                "message": completion.choices[0].message.content,
+                "projects": [
+                    {
+                        "_id": project.project_id,
+                        "title": project.title,
+                        "createdAt": project.created
+                    }
+                    for project, score in relevant_projects
+                ],
+                "users": [
+                    {
+                        "_id": user.user_id,
+                        "firstName": user.first_name,
+                        "lastName": user.last_name,
+                        "interestedTags": extract_tag_names(user.interested_tags)
+                    }
+                    for user, score in relevant_users
+                ] if relevant_users else []
+            }
+            
+            return result
     
     def query(self, question: str, top_k: int = 5) -> Dict:
         """
