@@ -526,7 +526,7 @@ class RAGChatbot:
                                 "_id": "objectID",
                                 "title": "Projektname",
                                 "createdAt": "2024-10-21 10:30:00"
-                                }
+                                }<
                             ],
                             "users": [
                                 {
