@@ -217,36 +217,36 @@ def run_langchain_query(prompt):
     lang = langdetect.detect(prompt)
     agent_executor = create_sql_agent(llm, db=db, agent_type="openai-tools", verbose=True)
     if lang == 'de':
-            specific_prompt ="""
-       Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
-    - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
-    - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
-    - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
+        specific_prompt ="""
+        Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
+        - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
+        - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
+        - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
 
-    {
-      "message": "Dein Antworttext",
-      "projects": [
         {
-          "_id": "objectID",
-          "title": "Projektname",
-          "createdAt": "2024-10-21 10:30:00"
+        "message": "Dein Antworttext",
+        "projects": [
+            {
+            "_id": "objectID",
+            "title": "Projektname",
+            "createdAt": "2024-10-21 10:30:00"
+            }
+        ],
+        "users": [
+            {
+            "_id": "objectID",
+            "firstName": "Vorname",
+            "lastName": "Nachname",
+            "interestedTags": ["Tag1", "Tag2"]
+            }
+        ]
         }
-      ],
-      "users": [
-        {
-          "_id": "objectID",
-          "firstName": "Vorname",
-          "lastName": "Nachname",
-          "interestedTags": ["Tag1", "Tag2"]
-        }
-      ]
-    }
 
-    Außerdem gib nur den Output zurück; nichts vom Input
-    Falls keine Projekte oder Personen in der Anfrage relevant sind, lass die entsprechenden Listen leer.
+        Außerdem gib nur den Output zurück; nichts vom Input
+        Falls keine Projekte oder Personen in der Anfrage relevant sind, lass die entsprechenden Listen leer.
 
-    Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort.
-    """
+        Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort.
+        """
 
     else:
         specific_prompt = """

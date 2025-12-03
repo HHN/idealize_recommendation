@@ -44,6 +44,7 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from openai import OpenAI
 import apikey
+import bearer_token
 
 # Initialize OpenAI client
 client = OpenAI(api_key=apikey.APIKEY)
@@ -107,10 +108,9 @@ def insert_data_from_api() -> bool:
     Returns:
         True if sync was successful
     """
-    import bearer_token
     
     in_docker = pathlib.Path("/.dockerenv").exists()
-    base_url = "http://host.docker.internal:3000/" if in_docker else "http://localhost:6000/"
+    base_url = "http://host.docker.internal:6000/" if in_docker else "http://localhost:6000/"
 
     headers = {
         'Authorization': f'Bearer {bearer_token.TOKEN}',
@@ -286,29 +286,32 @@ class RAGChatbot:
     - Stores embeddings back to database
     """
     
-    def __init__(self):
+    def __init__(self, exclude_user_id: str = None):
         """
         Initialize RAG chatbot.
-        Loads projects and users from database.
-        Embeddings are generated fresh on each query.
+        Loads ALL projects and users from database and generates embeddings once.
+        User filtering is done at query time, not at initialization.
+        
+        Args:
+            exclude_user_id: Deprecated - filtering now done at query time
         """
         self.projects: List[ProjectDocument] = []
         self.users: List[UserDocument] = []
         self.project_embeddings: np.ndarray = None
         self.user_embeddings: np.ndarray = None
         
-        # Load data from database
+        # Load ALL data from database (no filtering at init)
         self.load_projects_from_sql()
         self.load_users_from_sql()
         
-        # Generate embeddings fresh
-        print("🔄 Generating fresh embeddings...")
+        # Generate embeddings once for all data
+        print("🔄 Generating embeddings for all projects and users...")
         self.create_project_embeddings()
         self.create_user_embeddings()
     
     def load_projects_from_sql(self) -> None:
-        """Load projects from SQL database."""
-        print("📁 Loading projects from database...")
+        """Load ALL projects from SQL database (filtering done at query time)."""
+        print("📁 Loading all projects from database...")
         
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -342,8 +345,8 @@ class RAGChatbot:
         print(f"✅ Loaded {len(self.projects)} projects")
     
     def load_users_from_sql(self) -> None:
-        """Load users from SQL database."""
-        print("📁 Loading users from database...")
+        """Load ALL users from SQL database (filtering done at query time)."""
+        print("📁 Loading all users from database...")
         
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -427,12 +430,13 @@ class RAGChatbot:
         """Calculate cosine similarity between two vectors."""
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
     
-    def retrieve_relevant_projects(self, query: str, top_k: int = 5) -> List[Tuple[ProjectDocument, float]]:
+    def retrieve_relevant_projects(self, query: str, exclude_user_id: str = None, top_k: int = 5) -> List[Tuple[ProjectDocument, float]]:
         """
         Find most relevant projects using semantic search.
         
         Args:
             query: Search query
+            exclude_user_id: Optional user ID to exclude their projects
             top_k: Number of results to return
             
         Returns:
@@ -446,14 +450,30 @@ class RAGChatbot:
         
         similarities = []
         for i, project_embedding in enumerate(self.project_embeddings):
+            project = self.projects[i]
+            
+            # Skip projects owned by the excluded user
+            if exclude_user_id and project.owner == exclude_user_id:
+                continue
+                
             similarity = self.cosine_similarity(query_embedding, project_embedding)
-            similarities.append((self.projects[i], similarity))
+            similarities.append((project, similarity))
         
         similarities.sort(key=lambda x: x[1], reverse=True)
         return similarities[:top_k]
     
-    def retrieve_relevant_users(self, query: str, top_k: int = 5) -> List[Tuple[UserDocument, float]]:
-        """Find most relevant users using semantic search."""
+    def retrieve_relevant_users(self, query: str, exclude_user_id: str = None, top_k: int = 5) -> List[Tuple[UserDocument, float]]:
+        """
+        Find most relevant users using semantic search.
+        
+        Args:
+            query: Search query
+            exclude_user_id: Optional user ID to exclude from results
+            top_k: Number of results to return
+            
+        Returns:
+            List of (user, similarity_score) tuples
+        """
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=query
@@ -462,8 +482,14 @@ class RAGChatbot:
         
         similarities = []
         for i, user_embedding in enumerate(self.user_embeddings):
+            user = self.users[i]
+            
+            # Skip the excluded user
+            if exclude_user_id and user.user_id == exclude_user_id:
+                continue
+                
             similarity = self.cosine_similarity(query_embedding, user_embedding)
-            similarities.append((self.users[i], similarity))
+            similarities.append((user, similarity))
         
         similarities.sort(key=lambda x: x[1], reverse=True)
         return similarities[:top_k]
@@ -643,12 +669,13 @@ class RAGChatbot:
             
             return result
     
-    def query(self, question: str, top_k: int = 5) -> Dict:
+    def query(self, question: str, user_id: str = None, top_k: int = 5) -> Dict:
         """
         Process user query with RAG pipeline.
         
         Args:
             question: User's question
+            user_id: Optional user ID to filter out their own projects and profile
             top_k: Number of results to return
             
         Returns:
@@ -656,14 +683,14 @@ class RAGChatbot:
         """
         print(f"\n🔍 Searching for: '{question}'")
         
-        # Retrieve relevant projects
-        relevant_projects = self.retrieve_relevant_projects(question, top_k)
+        # Retrieve relevant projects (filter by user_id if provided)
+        relevant_projects = self.retrieve_relevant_projects(question, user_id, top_k)
         print(f"📊 Found {len(relevant_projects)} relevant projects")
         
-        # Retrieve users (optional, can be disabled if not needed)
+        # Retrieve users (filter by user_id if provided)
         relevant_users = None
         if len(self.users) > 0:
-            relevant_users = self.retrieve_relevant_users(question, top_k)
+            relevant_users = self.retrieve_relevant_users(question, user_id, top_k)
             print(f"👥 Found {len(relevant_users)} relevant users")
         
         # Generate response
@@ -680,13 +707,27 @@ class RAGChatbot:
 # API ENTRY POINT
 # =============================================================================
 
-def query_projects(message: str) -> str:
+# Global chatbot instance (initialized once at startup)
+_chatbot_instance: Optional[RAGChatbot] = None
+
+def initialize_chatbot() -> None:
+    """
+    Initialize the global RAG chatbot instance.
+    Called once during FastAPI startup to load data and generate embeddings.
+    """
+    global _chatbot_instance
+    _chatbot_instance = RAGChatbot(exclude_user_id=None)
+    print(f"📊 Chatbot initialized with {len(_chatbot_instance.projects)} projects and {len(_chatbot_instance.users)} users")
+
+
+def query_projects(message: str, user_id: str = None) -> str:
     """
     Main entry point for FastAPI integration.
-    Creates fresh chatbot instance and processes query.
+    Uses the global chatbot instance (loaded once at startup).
     
     Args:
         message: User's query message
+        user_id: Optional user ID to exclude their own projects and user from results
         
     Returns:
         JSON string with response in sqlchatbot.py compatible format:
@@ -696,16 +737,20 @@ def query_projects(message: str) -> str:
             "users": [{"_id": "...", "firstName": "...", "lastName": "...", "interestedTags": [...]}]
         }
     """
+    global _chatbot_instance
+    
     try:
+        if _chatbot_instance is None:
+            raise RuntimeError("RAG chatbot not initialized. Call initialize_chatbot() first.")
+        
         print("=" * 60)
         print("🚀 RAG Chatbot Query")
+        if user_id:
+            print(f"🔐 Filtering for user: {user_id}")
         print("=" * 60)
         
-        # Create fresh chatbot instance (generates new embeddings)
-        chatbot = RAGChatbot()
-        
-        # Process query
-        result = chatbot.query(message, top_k=5)
+        # Process query with user filtering
+        result = _chatbot_instance.query(message, user_id=user_id, top_k=5)
         
         print("✅ Query completed successfully")
         print("=" * 60)
