@@ -18,6 +18,8 @@ import sqlchatbot
 import rag_chatbot
 from contextlib import asynccontextmanager
 from typing import Optional
+from bearer_token import TOKEN
+import jwt
 
 # Old sql agent 
 # @asynccontextmanager
@@ -67,17 +69,36 @@ class ChatRequest(BaseModel):
 @app.post("/api/chatbot")
 async def chatbot(
     request: ChatRequest,
-    id: Optional[str] = Query(None, description="User ID to exclude own projects")
+    # id: Optional[str] = Query(None, description="User ID to exclude own projects")
 ):
-    # bot_response = sqlchatbot.run_langchain_query(request.message) # Old with sqlagent  
-    if id:
-        print(f"Request from user: {id}")
+    # bot_response = sqlchatbot.run_langchain_query(request.message) # Old with sqlagent 
+    user_id = get_user_id_from_token(TOKEN)
+    if user_id:
+        print(f"Request from user: {user_id}!!!!!!")
     else:
         print("No user ID provided, showing all projects")
     
     # Use RAG chatbot to process the query
-    bot_response = rag_chatbot.query_projects(request.message, user_id=id)
+    bot_response = rag_chatbot.query_projects(request.message, user_id=user_id)
 
     # Return the bot response as JSON
     return {"response": bot_response}
+
+
+def get_user_id_from_token(token: str) -> str:
+    """
+    Decode JWT token and extract user ID.
+    
+    Args:
+        token: JWT bearer token
+        
+    Returns:
+        User ID string
+    """
+    try:
+        # Decode without verification (if you don't have the secret key)
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return payload.get('userId')
+    except jwt.DecodeError:
+        return None
 
