@@ -195,7 +195,7 @@ def insert_data_from_api():
 
 import json
 
-def run_langchain_query(prompt):
+def run_langchain_query(prompt: str, user_id: str=None):
     db_config = {
         "host": "127.0.0.1",
         "user": "root",

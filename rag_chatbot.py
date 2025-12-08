@@ -717,7 +717,7 @@ def initialize_chatbot() -> None:
     """
     global _chatbot_instance
     _chatbot_instance = RAGChatbot(exclude_user_id=None)
-    print(f"📊 Chatbot initialized with {len(_chatbot_instance.projects)} projects and {len(_chatbot_instance.users)} users")
+    print(f"Chatbot initialized with {len(_chatbot_instance.projects)} projects and {len(_chatbot_instance.users)} users")
 
 
 def query_projects(message: str, user_id: str = None) -> str:

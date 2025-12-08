@@ -65,21 +65,35 @@ app = FastAPI(lifespan=lifespan)
 class ChatRequest(BaseModel):
     message: str
 
-# Create an API endpoint that accepts POST requests with user_id as URL parameter
 @app.post("/api/chatbot")
 async def chatbot(
     request: ChatRequest,
-    # id: Optional[str] = Query(None, description="User ID to exclude own projects")
 ):
-    # bot_response = sqlchatbot.run_langchain_query(request.message) # Old with sqlagent 
     user_id = get_user_id_from_token(TOKEN)
     if user_id:
-        print(f"Request from user: {user_id}!!!!!!")
+        print(f"Request from user: {user_id}")
     else:
         print("No user ID provided, showing all projects")
     
     # Use RAG chatbot to process the query
     bot_response = rag_chatbot.query_projects(request.message, user_id=user_id)
+
+    # Return the bot response as JSON
+    return {"response": bot_response}
+
+@app.post("/api/sqlchatbot")
+async def sql_chatbot(
+    request: ChatRequest,
+):
+    
+    user_id = get_user_id_from_token(TOKEN)
+    if user_id:
+        print(f"Request from user: {user_id}")
+    else:
+        print("No user ID provided, showing all projects")
+    
+    # Use sql chatbot to process the query
+    bot_response = sqlchatbot.run_langchain_query(request.message, user_id=user_id) # Old with sqlagent 
 
     # Return the bot response as JSON
     return {"response": bot_response}
