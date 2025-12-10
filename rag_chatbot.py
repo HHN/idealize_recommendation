@@ -110,25 +110,45 @@ def insert_data_from_api() -> bool:
     """
     
     in_docker = pathlib.Path("/.dockerenv").exists()
-    # base_url = "http://host.docker.internal:7000/" if in_docker else "http://localhost:7000/"
-    base_url = "http://172.22.0.2:7000/" if in_docker else "http://localhost:7000/"
+    
+    if in_docker:
+        # Try multiple connection methods in Docker
+        urls_to_try = [
+            "http://backend-ai:7000/",  # Container name in same network
+            "http://idealize_server_ai-backend-ai:7000/",  # Full container name
+            "http://172.22.0.2:7000/",  # Container IP
+            "http://host.docker.internal:7000/",  # Host machine
+        ]
+    else:
+        urls_to_try = ["http://localhost:7000/"]
 
     headers = {
         'Authorization': f'Bearer {bearer_token.TOKEN}',
         'Content-Type': 'application/json'
     }
 
-    print(f"🔄 Fetching data from API: {base_url}")
+    response_projects = None
+    response_users = None
+    response_tags = None
+    successful_url = None
     
-    try:
-        response_projects = requests.get(base_url + 'projects', headers=headers, timeout=5)
-        response_users = requests.get(base_url + 'users', headers=headers, timeout=5)
-        response_tags = requests.get(base_url + 'tags', headers=headers, timeout=5)
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Connection failed: {e}")
-        return False
-
-    if response_projects.status_code != 200 or response_users.status_code != 200 or response_tags.status_code != 200:
+    # Try each URL until one works
+    for base_url in urls_to_try:
+        try:
+            print(f"🔄 Trying: {base_url}")
+            response_projects = requests.get(base_url + 'projects', headers=headers, timeout=5)
+            response_users = requests.get(base_url + 'users', headers=headers, timeout=5)
+            response_tags = requests.get(base_url + 'tags', headers=headers, timeout=5)
+            
+            if response_projects.status_code == 200 and response_users.status_code == 200 and response_tags.status_code == 200:
+                successful_url = base_url
+                print(f"✅ Connected to: {base_url}")
+                break
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Failed {base_url}: {str(e)[:100]}")
+            continue
+    
+    if not successful_url or response_projects.status_code != 200:
         print(f"❌ Failed to fetch data from API")
         return False
 
@@ -447,10 +467,6 @@ class RAGChatbot:
         Returns:
             List of (project, similarity_score) tuples
         """
-        # Return empty list if no projects or embeddings
-        if not self.projects or self.project_embeddings is None:
-            return []
-        
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=query
@@ -483,10 +499,6 @@ class RAGChatbot:
         Returns:
             List of (user, similarity_score) tuples
         """
-        # Return empty list if no users or embeddings
-        if not self.users or self.user_embeddings is None:
-            return []
-        
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=query
