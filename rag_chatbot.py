@@ -120,9 +120,13 @@ def insert_data_from_api() -> bool:
 
     print(f"🔄 Fetching data from API: {base_url}")
     
-    response_projects = requests.get(base_url + 'projects', headers=headers)
-    response_users = requests.get(base_url + 'users', headers=headers)
-    response_tags = requests.get(base_url + 'tags', headers=headers)
+    try:
+        response_projects = requests.get(base_url + 'projects', headers=headers, timeout=5)
+        response_users = requests.get(base_url + 'users', headers=headers, timeout=5)
+        response_tags = requests.get(base_url + 'tags', headers=headers, timeout=5)
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Connection failed: {e}")
+        return False
 
     if response_projects.status_code != 200 or response_users.status_code != 200 or response_tags.status_code != 200:
         print(f"❌ Failed to fetch data from API")
