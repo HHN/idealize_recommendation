@@ -6,6 +6,7 @@ uvicorn
 langchain
 openai
 numpy
+PyJWT
 
 langdetect
 langchain_community
