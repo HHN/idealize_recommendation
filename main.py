@@ -45,17 +45,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Data sync failed (will use existing database): {e}")
     
-    # Initialize RAG chatbot (required - will fail startup if this fails)
+    # Initialize RAG chatbot (allow startup even if no data exists yet)
     try:
         print("🔄 Initializing RAG chatbot...")
         rag_chatbot.initialize_chatbot()
         print("✅ RAG chatbot initialized and ready")
     except Exception as e:
-        print(f"❌ CRITICAL: Chatbot initialization failed: {e}")
+        print(f"⚠️ WARNING: Chatbot initialization failed: {e}")
+        print(f"   Server will start but chatbot may not work until database is populated")
         import traceback
         traceback.print_exc()
-        # Re-raise to prevent server from starting with broken chatbot
-        raise
+        # Don't raise - allow server to start for debugging
     
     yield
 
