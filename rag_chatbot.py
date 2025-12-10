@@ -110,7 +110,7 @@ def insert_data_from_api() -> bool:
     """
     
     in_docker = pathlib.Path("/.dockerenv").exists()
-    base_url = "http://host.docker.internal:6000/" if in_docker else "http://localhost:6000/"
+    base_url = "http://host.docker.internal:7000/" if in_docker else "http://localhost:7000/"
 
     headers = {
         'Authorization': f'Bearer {bearer_token.TOKEN}',
