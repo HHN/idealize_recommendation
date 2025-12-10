@@ -447,6 +447,10 @@ class RAGChatbot:
         Returns:
             List of (project, similarity_score) tuples
         """
+        # Return empty list if no projects or embeddings
+        if not self.projects or self.project_embeddings is None:
+            return []
+        
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=query
@@ -479,6 +483,10 @@ class RAGChatbot:
         Returns:
             List of (user, similarity_score) tuples
         """
+        # Return empty list if no users or embeddings
+        if not self.users or self.user_embeddings is None:
+            return []
+        
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=query
