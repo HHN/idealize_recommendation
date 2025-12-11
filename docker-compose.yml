@@ -38,7 +38,7 @@ services:
     depends_on:
       mariadb:
         condition: service_healthy
-    network_mode: "service:mariadb"
+    # network_mode: "service:mariadb"
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     environment:
       SERVER_BASE_URL: "http://backend-ai:7000/"
