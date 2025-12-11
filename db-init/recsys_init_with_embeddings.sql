@@ -85,11 +85,14 @@ CREATE TABLE IF NOT EXISTS Projects (
 -- Index for finding projects that need embedding updates
 CREATE INDEX idx_projects_needs_embedding ON Projects(needs_embedding_update);
 
+-- Index for checking if embeddings exist
+CREATE INDEX idx_projects_has_embedding ON Projects((embedding IS NOT NULL));
+
 -- Index for draft status (commonly filtered)
 CREATE INDEX idx_projects_draft ON Projects(isDraft);
 
--- Composite index for common query pattern: non-draft projects
-CREATE INDEX idx_projects_search_ready ON Projects(isDraft, needs_embedding_update);
+-- Composite index for common query pattern: non-draft projects with embeddings
+CREATE INDEX idx_projects_search_ready ON Projects(isDraft, needs_embedding_update, (embedding IS NOT NULL));
 
 
 -- =============================================================================
@@ -131,6 +134,7 @@ CREATE TABLE IF NOT EXISTS Users (
 -- Indexes for Users table
 -- -----------------------
 CREATE INDEX idx_users_needs_embedding ON Users(needs_embedding_update);
+CREATE INDEX idx_users_has_embedding ON Users((embedding IS NOT NULL));
 CREATE INDEX idx_users_email ON Users(email);
 CREATE INDEX idx_users_username ON Users(username);
 
