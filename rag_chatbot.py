@@ -539,18 +539,21 @@ class RAGChatbot:
         # Detect language
         lang = langdetect.detect(query)
         
-        # Build context with retrieved information
+        # Build context with retrieved information INCLUDING IDs
         context = "The following relevant projects were found:\n\n"
         for i, (project, score) in enumerate(relevant_projects, 1):
-            context += f"{i}. {project.title}\n"
+            context += f"{i}. ID: {project.project_id}\n"
+            context += f"   Title: {project.title}\n"
             context += f"   Description: {project.description}\n"
             context += f"   Tags: {', '.join(project.tags)}\n"
+            context += f"   Created: {project.created}\n"
             context += f"   Relevance: {score:.3f}\n\n"
         
         if relevant_users:
             context += "\nRelevant users:\n\n"
             for i, (user, score) in enumerate(relevant_users, 1):
-                context += f"{i}. {user.first_name} {user.last_name}\n"
+                context += f"{i}. ID: {user.user_id}\n"
+                context += f"   Name: {user.first_name} {user.last_name}\n"
                 # Extract tag names from interested_tags
                 def extract_names(items):
                     if not items:
@@ -572,20 +575,21 @@ class RAGChatbot:
             specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
                             - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
                             - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
+                            - WICHTIG: Verwende die EXAKTE _id aus dem Kontext (z.B. "675b4c8e9d1234567890abcd"), NICHT den Platzhalter "objectID"!
                             - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
 
                             {
                             "message": "Dein Antworttext",
                             "projects": [
                                 {
-                                "_id": "objectID",
+                                "_id": "675b4c8e9d1234567890abcd",
                                 "title": "Projektname",
                                 "createdAt": "2024-10-21 10:30:00"
-                                }<
+                                }
                             ],
                             "users": [
                                 {
-                                "_id": "objectID",
+                                "_id": "675b4c8e9d1234567890abcd",
                                 "firstName": "Vorname",
                                 "lastName": "Nachname",
                                 "interestedTags": ["Tag1", "Tag2"]
@@ -601,20 +605,21 @@ class RAGChatbot:
             specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
                             - When the request is about projects, return only the fields _id, title, and createdAt for each project.
                             - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
+                            - IMPORTANT: Use the EXACT _id from the context (e.g., "675b4c8e9d1234567890abcd"), NOT the placeholder "objectID"!
                             - In your response, I expect EXACTLY the following JSON format:
 
                             {
                             "message": "Your response text",
                             "projects": [
                                 {
-                                "_id": "objectID",
+                                "_id": "675b4c8e9d1234567890abcd",
                                 "title": "Project name",
                                 "createdAt": "2024-10-21 10:30:00"
                                 }
                             ],
                             "users": [
                                 {
-                                "_id": "objectID",
+                                "_id": "675b4c8e9d1234567890abcd",
                                 "firstName": "First name",
                                 "lastName": "Last name",
                                 "interestedTags": ["Tag1", "Tag2"]
