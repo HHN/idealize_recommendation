@@ -81,22 +81,22 @@ async def chatbot(
     # Return the bot response as JSON
     return {"response": bot_response}
 
-@app.post("/api/sqlchatbot")
-async def sql_chatbot(
-    request: ChatRequest,
-):
+# @app.post("/api/sqlchatbot")
+# async def sql_chatbot(
+#     request: ChatRequest,
+# ):
     
-    user_id = get_user_id_from_token(TOKEN)
-    if user_id:
-        print(f"Request from user: {user_id}")
-    else:
-        print("No user ID provided, showing all projects")
+#     user_id = get_user_id_from_token(TOKEN)
+#     if user_id:
+#         print(f"Request from user: {user_id}")
+#     else:
+#         print("No user ID provided, showing all projects")
     
-    # Use sql chatbot to process the query
-    bot_response = sqlchatbot.run_langchain_query(request.message, user_id=user_id) # Old with sqlagent 
+#     # Use sql chatbot to process the query
+#     bot_response = sqlchatbot.run_langchain_query(request.message, user_id=user_id) # Old with sqlagent 
 
-    # Return the bot response as JSON
-    return {"response": bot_response}
+#     # Return the bot response as JSON
+#     return {"response": bot_response}
 
 
 def get_user_id_from_token(token: str) -> str:
