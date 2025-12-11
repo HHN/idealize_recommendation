@@ -189,7 +189,7 @@ def insert_data_from_api() -> bool:
                    interestedTags, interestedCourses, studyPrograms, isBlockedByAdmin, createdAt, updatedAt)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON DUPLICATE KEY UPDATE firstName = VALUES(firstName), lastName = VALUES(lastName)""",
-                (user['_id'], user['firstName'], user['lastName'], user['email'], user['username'],
+                (user['_id'], user['firstName'], user['lastName'], user['email'], user.get('username', ''),
                  user['status'], user['userType'], json.dumps(user['interestedTags']),
                  json.dumps(user['interestedCourses']), json.dumps(user['studyPrograms']),
                  user['isBlockedByAdmin'], created_at, updated_at)
