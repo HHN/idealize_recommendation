@@ -62,8 +62,12 @@ def get_db_connection():
     """
     global connection
     if connection is None or not connection.open:
+        # Use 'mariadb' hostname when running in Docker, '127.0.0.1' otherwise
+        import os
+        db_host = 'mariadb' if os.path.exists('/.dockerenv') else '127.0.0.1'
+        
         connection = pymysql.connect(
-            host='127.0.0.1',
+            host=db_host,
             user='root',
             password='',
             database='recsys',

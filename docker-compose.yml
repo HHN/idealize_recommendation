@@ -23,7 +23,7 @@ services:
       start_period: 40s
       retries: 30
     ports:
-      - "3306:3306" # MariaDB
+      # - "3306:3306" # MariaDB
       - "8000:8000" # API - comment this if running outside docker
 
   chatbot-api:
