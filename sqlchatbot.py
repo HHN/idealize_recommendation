@@ -23,14 +23,24 @@ from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
 
-# Database connection configuration
-connection = pymysql.connect(
-    host='127.0.0.1',
-    user='root',
-    password='',
-    database='recsys',
-    cursorclass=pymysql.cursors.DictCursor
-)
+# Database connection configuration - lazy initialization
+connection = None
+
+def get_db_connection():
+    """Get or create database connection (lazy initialization)."""
+    global connection
+    if connection is None or not connection.open:
+        # Use 'mariadb' hostname when running in Docker, '127.0.0.1' otherwise
+        db_host = 'mariadb' if os.path.exists('/.dockerenv') else '127.0.0.1'
+        
+        connection = pymysql.connect(
+            host=db_host,
+            user='root',
+            password='',
+            database='recsys',
+            cursorclass=pymysql.cursors.DictCursor
+        )
+    return connection
 
 def convert_iso_to_mysql_datetime(iso_str):
     try:
@@ -44,7 +54,8 @@ def save_chat_to_db(prompt, response):
         # Convert the response (which might be a dict) to a JSON string
         response_str = json.dumps(response, ensure_ascii=False)
         
-        with connection.cursor() as cursor:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO chat_log (prompt, response)
@@ -52,7 +63,7 @@ def save_chat_to_db(prompt, response):
                 """,
                 (prompt, response_str)
             )
-        connection.commit()
+        conn.commit()
     except pymysql.MySQLError as e:
         print(f"Error saving chat to the database: {e}")
 
@@ -82,7 +93,8 @@ def insert_data_from_api():
     users = response_users.json()
     tags = response_tags.json()
 
-    with connection.cursor() as cursor:
+    conn = get_db_connection()
+    with conn.cursor() as cursor:
         # Leeren der bisherigen Tabellen
         # --------------------------------
         # Achtung: Project_Tags gibt es ja nicht mehr
@@ -190,7 +202,7 @@ def insert_data_from_api():
                 )
             )
 
-        connection.commit()
+        conn.commit()
         return True
 
 
