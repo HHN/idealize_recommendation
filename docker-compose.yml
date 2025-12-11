@@ -23,8 +23,7 @@ services:
       start_period: 40s
       retries: 30
     networks:
-      - backend-network
-      - default
+      - idealize_server_ai_server-network-ai
 
   chatbot-api:
     build: .
@@ -38,8 +37,7 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - backend-network
-      - default
+      - idealize_server_ai_server-network-ai
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     environment:
       SERVER_BASE_URL: "http://backend-ai:7000/"
