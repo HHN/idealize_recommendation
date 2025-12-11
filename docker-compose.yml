@@ -50,6 +50,6 @@ volumes:
 networks:
   backend-network:
     external: true
-    name: idealize_server_ai-backend-a1
+    name: idealize_server_ai_server-network-ai
   default:
     driver: bridge
