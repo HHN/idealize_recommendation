@@ -23,7 +23,7 @@ services:
       start_period: 40s
       retries: 30
     networks:
-      - backend-ai
+      - backend-network
       - default
 
   chatbot-api:
@@ -38,7 +38,7 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - backend-ai
+      - backend-network
       - default
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     environment:
@@ -48,7 +48,8 @@ volumes:
   db_data:
 
 networks:
-  backend-ai:
+  backend-network:
     external: true
+    name: idealize_server_ai_default
   default:
     driver: bridge
