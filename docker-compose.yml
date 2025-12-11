@@ -25,6 +25,9 @@ services:
     ports:
       - "3306:3306" # MariaDB
       - "8000:8000" # API - comment this if running outside docker
+    networks:
+      - backend-network
+      - default
 
   chatbot-api:
     build: .
@@ -38,7 +41,17 @@ services:
     network_mode: "service:mariadb"
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     environment:
-      SERVER_BASE_URL: "http://172.22.0.2:7000/"
+      SERVER_BASE_URL: "http://backend-ai:7000/"
+    networks:
+      - backend-network
+      - default
 
 volumes:
   db_data:
+
+networks:
+  backend-network:
+    external: true
+    name: backend-ai
+  default:
+    driver: bridge
