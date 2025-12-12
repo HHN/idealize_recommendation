@@ -634,11 +634,11 @@ class RAGChatbot:
 
                             Always answer in the same language as the following request:"""
         
-            # Combine specific prompt with context and query
-            user_prompt = f"""{specific_prompt}
-                        Based on this information:
-                        {context}
-                        Answer: {query}"""
+        # Combine specific prompt with context and query (works for both languages)
+        user_prompt = f"""{specific_prompt}
+                    Based on this information:
+                    {context}
+                    Answer: {query}"""
 
         completion = client.chat.completions.create(
             model="gpt-4-turbo",
