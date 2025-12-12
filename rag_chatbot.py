@@ -705,22 +705,27 @@ class RAGChatbot:
         Args:
             question: User's question
             user_id: Optional user ID to filter out their own projects and profile
-            top_k: Number of results to return
+            top_k: Total number of results to return (combined projects + users)
             
         Returns:
             Dictionary with response (compatible with sqlchatbot.py format)
         """
         print(f"\n🔍 Searching for: '{question}'")
         
+        # Distribute top_k between projects and users (3 projects, 2 users for top_k=5)
+        # Adjust distribution based on top_k value
+        project_limit = max(1, int(top_k * 0.6))  # 60% for projects
+        user_limit = max(1, top_k - project_limit)  # Remaining for users
+        
         # Retrieve relevant projects (filter by user_id if provided)
-        relevant_projects = self.retrieve_relevant_projects(question, user_id, top_k)
-        print(f"📊 Found {len(relevant_projects)} relevant projects")
+        relevant_projects = self.retrieve_relevant_projects(question, user_id, project_limit)
+        print(f"📊 Found {len(relevant_projects)} relevant projects (limited to {project_limit})")
         
         # Retrieve users (filter by user_id if provided)
         relevant_users = None
         if len(self.users) > 0:
-            relevant_users = self.retrieve_relevant_users(question, user_id, top_k)
-            print(f"👥 Found {len(relevant_users)} relevant users")
+            relevant_users = self.retrieve_relevant_users(question, user_id, user_limit)
+            print(f"👥 Found {len(relevant_users)} relevant users (limited to {user_limit})")
         
         # Generate response
         print("💬 Generating response with GPT-4...")
