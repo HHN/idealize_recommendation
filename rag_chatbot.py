@@ -88,6 +88,27 @@ def convert_iso_to_mysql_datetime(iso_str: str) -> Optional[str]:
         return None
 
 
+def load_artificial_users() -> List[Dict]:
+    """
+    Load artificial user data from user_file.json.
+    
+    Returns:
+        List of artificial user dictionaries with firstname, lastname, username, and email
+    """
+    user_file_path = os.path.join(os.path.dirname(__file__), 'user_file.json')
+    try:
+        with open(user_file_path, 'r', encoding='utf-8') as f:
+            artificial_users = json.load(f)
+        print(f"✅ Loaded {len(artificial_users)} artificial users from user_file.json (",user_file_path,")")
+        return artificial_users
+    except FileNotFoundError:
+        print(f"❌ Error: user_file.json not found at {user_file_path}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"❌ Error parsing user_file.json: {e}")
+        return []
+
+
 def save_chat_to_db(prompt: str, response: Dict) -> None:
     """Save chat interaction to database for logging."""
     try:
@@ -162,6 +183,17 @@ def insert_data_from_api() -> bool:
     
     print(f"✅ Fetched {len(projects)} projects, {len(users)} users, {len(tags)} tags")
 
+    # Load artificial user data for anonymization
+    artificial_users = load_artificial_users()
+    if not artificial_users:
+        print("❌ Failed to load artificial users. Aborting data sync.")
+        return False
+    
+    # Check if we have enough artificial users
+    if len(users) > len(artificial_users):
+        print(f"⚠️ Warning: {len(users)} real users but only {len(artificial_users)} artificial users available.")
+        print(f"   Some users will be reused (cycling through artificial data).")
+
     conn = get_db_connection()
     with conn.cursor() as cursor:
         cursor.execute("DELETE FROM Tags")
@@ -180,16 +212,27 @@ def insert_data_from_api() -> bool:
                 (tag['_id'], tag['name'], tag['type'], created_at, updated_at)
             )
 
-        # Insert Users
-        for user in users:
+        # Insert Users with anonymized data
+        for idx, user in enumerate(users):
+            # Get artificial user data (cycle through if needed)
+            artificial_user = artificial_users[idx % len(artificial_users)]
+            
+            # Replace sensitive data with artificial data
+            anonymized_firstname = artificial_user['firstname']
+            anonymized_lastname = artificial_user['lastname']
+            anonymized_email = artificial_user['email']
+            anonymized_username = artificial_user['username']
+            
+            # Keep all other user data from the API
             created_at = convert_iso_to_mysql_datetime(user['createdAt'])
             updated_at = convert_iso_to_mysql_datetime(user['updatedAt'])
+            
             cursor.execute(
                 """INSERT INTO Users (_id, firstName, lastName, email, username, status, userType, 
                    interestedTags, interestedCourses, studyPrograms, isBlockedByAdmin, createdAt, updatedAt)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON DUPLICATE KEY UPDATE firstName = VALUES(firstName), lastName = VALUES(lastName)""",
-                (user['_id'], user['firstName'], user['lastName'], user['email'], user.get('username', ''),
+                (user['_id'], anonymized_firstname, anonymized_lastname, anonymized_email, anonymized_username,
                  user['status'], user['userType'], json.dumps(user['interestedTags']),
                  json.dumps(user['interestedCourses']), json.dumps(user['studyPrograms']),
                  user['isBlockedByAdmin'], created_at, updated_at)
