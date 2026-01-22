@@ -334,13 +334,13 @@ class RAGChatbot:
         self.load_users_from_sql()
         
         # Generate embeddings once for all data
-        print("🔄 Generating embeddings for all projects and users...")
+        print("Generating embeddings for all projects and users...")
         self.create_project_embeddings()
         self.create_user_embeddings()
     
     def load_projects_from_sql(self) -> None:
         """Load ALL projects from SQL database (filtering done at query time)."""
-        print("📁 Loading all projects from database...")
+        print("Loading all projects from database...")
         
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -375,7 +375,7 @@ class RAGChatbot:
     
     def load_users_from_sql(self) -> None:
         """Load ALL users from SQL database (filtering done at query time)."""
-        print("📁 Loading all users from database...")
+        print("Loading all users from database...")
         
         conn = get_db_connection()
         with conn.cursor() as cursor:
@@ -408,7 +408,7 @@ class RAGChatbot:
 
     def create_project_embeddings(self) -> None:
         """Generate embeddings for all projects using OpenAI API."""
-        print("🔄 Creating project embeddings...")
+        print("Creating project embeddings...")
         
         if not self.projects:
             print("⚠️  No projects to embed")
@@ -428,14 +428,14 @@ class RAGChatbot:
             embeddings.extend(batch_embeddings)
         
         self.project_embeddings = np.array(embeddings)
-        print(f"✅ Created project embeddings: {self.project_embeddings.shape}")
+        print(f"Created project embeddings: {self.project_embeddings.shape}")
     
     def create_user_embeddings(self) -> None:
         """Generate embeddings for all users using OpenAI API."""
-        print("🔄 Creating user embeddings...")
+        print("Creating user embeddings...")
         
         if not self.users:
-            print("⚠️  No users to embed")
+            print("No users to embed")
             return
         
         texts = [user.to_text() for user in self.users]
@@ -452,7 +452,7 @@ class RAGChatbot:
             embeddings.extend(batch_embeddings)
         
         self.user_embeddings = np.array(embeddings)
-        print(f"✅ Created user embeddings: {self.user_embeddings.shape}")
+        print(f"Created user embeddings: {self.user_embeddings.shape}")
     
 
     def cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
@@ -665,7 +665,7 @@ class RAGChatbot:
             return result
             
         except json.JSONDecodeError as e:
-            print(f"⚠️  Failed to parse GPT-4 response as JSON: {e}")
+            print(f"Failed to parse GPT-4 response as JSON: {e}")
             print(f"Raw response: {completion.choices[0].message.content}")
             
             # Fallback: return structured data manually
@@ -715,20 +715,20 @@ class RAGChatbot:
         Returns:
             Dictionary with response (compatible with sqlchatbot.py format)
         """
-        print(f"\n🔍 Searching for: '{question}'")
+        print(f"\nSearching for: '{question}'")
         
         # Retrieve relevant projects (filter by user_id if provided)
         relevant_projects = self.retrieve_relevant_projects(question, user_id, top_k)
-        print(f"📊 Found {len(relevant_projects)} relevant projects")
+        print(f"Found {len(relevant_projects)} relevant projects")
         
         # Retrieve users (filter by user_id if provided)
         relevant_users = None
         if len(self.users) > 0:
             relevant_users = self.retrieve_relevant_users(question, user_id, top_k)
-            print(f"👥 Found {len(relevant_users)} relevant users")
+            print(f"Found {len(relevant_users)} relevant users")
         
         # Generate response
-        print("💬 Generating response with GPT-4...")
+        print("Generating response with GPT-4...")
         response = self.generate_response(question, relevant_projects, relevant_users)
         
         # Log to database
@@ -778,22 +778,22 @@ def query_projects(message: str, user_id: str = None) -> str:
             raise RuntimeError("RAG chatbot not initialized. Call initialize_chatbot() first.")
         
         print("=" * 60)
-        print("🚀 RAG Chatbot Query")
+        print("RAG Chatbot Query")
         if user_id:
-            print(f"🔐 Filtering for user: {user_id}")
+            print(f"Filtering for user: {user_id}")
         print("=" * 60)
         
         # Process query with user filtering
         result = _chatbot_instance.query(message, user_id=user_id, top_k=5)
         
-        print("✅ Query completed successfully")
+        print("Query completed successfully")
         print("=" * 60)
         
         # Return as JSON string (like sqlchatbot.py)
         return json.dumps(result, ensure_ascii=False, separators=(',', ':'))
         
     except Exception as e:
-        print(f"❌ Error processing query: {e}")
+        print(f"Error processing query: {e}")
         import traceback
         traceback.print_exc()
         
