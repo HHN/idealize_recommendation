@@ -17,7 +17,7 @@ RAG (Retrieval Augmented Generation) Chatbot with Database-Stored Embeddings
 =============================================================================
 This module implements a production-ready RAG chatbot for FastAPI integration that:
 - Uses ONLY MariaDB for data storage (no file dependencies)
-- Generates fresh embeddings on each request for maximum accuracy
+- Generates vector embeddings for projects and users one time at the initialization of the RAG Chatbot for proof of concept
 - Supports both project and user retrieval
 - Logs all interactions
 
