@@ -1,4 +1,5 @@
 apikey.py
+apikey.env
 bearer_token.py
 test_api.py
 Vectorize/
@@ -163,8 +164,6 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
-
-apikey.env
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
