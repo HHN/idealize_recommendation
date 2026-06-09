@@ -459,6 +459,48 @@ class RAGChatbot:
         """Calculate cosine similarity between two vectors."""
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
     
+    def detect_query_intent(self, query: str) -> str:
+        """
+        Detect whether the user is asking for projects, users, or both.
+        
+        Args:
+            query: User's query
+            
+        Returns:
+            'projects', 'users', or 'both'
+        """
+        query_lower = query.lower()
+        
+        # German keywords
+        project_keywords_de = ['projekt', 'projekte', 'projektidee', 'projektideen', 'vorhaben', 'initiative']
+        user_keywords_de = ['nutzer', 'benutzer', 'person', 'personen', 'student', 'studenten', 
+                           'kollege', 'kollegen', 'mitglied', 'mitglieder', 'leute', 'menschen',
+                           'kommilitone', 'kommilitonen', 'teampartner', 'partner']
+        
+        # English keywords
+        project_keywords_en = ['project', 'projects', 'initiative', 'initiatives', 'idea', 'ideas']
+        user_keywords_en = ['user', 'users', 'person', 'people', 'student', 'students', 
+                           'colleague', 'colleagues', 'member', 'members', 'teammate', 'partner', 'partners']
+        
+        # Combine all keywords
+        project_keywords = project_keywords_de + project_keywords_en
+        user_keywords = user_keywords_de + user_keywords_en
+        
+        # Count matches
+        project_matches = sum(1 for keyword in project_keywords if keyword in query_lower)
+        user_matches = sum(1 for keyword in user_keywords if keyword in query_lower)
+        
+        # Decision logic
+        if project_matches > 0 and user_matches == 0:
+            return 'projects'
+        elif user_matches > 0 and project_matches == 0:
+            return 'users'
+        elif project_matches > 0 and user_matches > 0:
+            return 'both'
+        else:
+            # Default: if unclear, search both
+            return 'both'
+    
     def retrieve_relevant_projects(self, query: str, exclude_user_id: str = None, top_k: int = 5) -> List[Tuple[ProjectDocument, float]]:
         """
         Find most relevant projects using semantic search.
@@ -524,7 +566,7 @@ class RAGChatbot:
         return similarities[:top_k]
     
     def generate_response(self, query: str, relevant_projects: List[Tuple[ProjectDocument, float]], 
-                         relevant_users: List[Tuple[UserDocument, float]] = None) -> Dict:
+                         relevant_users: List[Tuple[UserDocument, float]] = None, intent: str = 'both') -> Dict:
         """
         Generate natural language response using GPT-4-turbo with language detection.
         
@@ -532,6 +574,7 @@ class RAGChatbot:
             query: User's query
             relevant_projects: Retrieved projects
             relevant_users: Retrieved users (optional)
+            intent: Query intent ('projects', 'users', or 'both')
             
         Returns:
             Dictionary with message and retrieved items in sqlchatbot.py compatible format
@@ -539,18 +582,23 @@ class RAGChatbot:
         # Detect language
         lang = langdetect.detect(query)
         
-        # Build context with retrieved information INCLUDING IDs
-        context = "The following relevant projects were found:\n\n"
-        for i, (project, score) in enumerate(relevant_projects, 1):
-            context += f"{i}. ID: {project.project_id}\n"
-            context += f"   Title: {project.title}\n"
-            context += f"   Description: {project.description}\n"
-            context += f"   Tags: {', '.join(project.tags)}\n"
-            context += f"   Created: {project.created}\n"
-            context += f"   Relevance: {score:.3f}\n\n"
+        # Build context with retrieved information (based on intent)
+        context = ""
         
-        if relevant_users:
-            context += "\nRelevant users:\n\n"
+        if relevant_projects and intent in ['projects', 'both']:
+            context += "The following relevant projects were found:\n\n"
+            for i, (project, score) in enumerate(relevant_projects, 1):
+                context += f"{i}. ID: {project.project_id}\n"
+                context += f"   Title: {project.title}\n"
+                context += f"   Description: {project.description}\n"
+                context += f"   Tags: {', '.join(project.tags)}\n"
+                context += f"   Created: {project.created}\n"
+                context += f"   Relevance: {score:.3f}\n\n"
+        
+        if relevant_users and intent in ['users', 'both']:
+            if context:  # Add separator if we already have projects
+                context += "\n"
+            context += "Relevant users:\n\n"
             for i, (user, score) in enumerate(relevant_users, 1):
                 context += f"{i}. ID: {user.user_id}\n"
                 context += f"   Name: {user.first_name} {user.last_name}\n"
@@ -570,69 +618,169 @@ class RAGChatbot:
                 context += f"   Interested in: {', '.join(tag_names)}\n"
                 context += f"   Relevance: {score:.3f}\n\n"
         
-        # Set system prompt based on detected language
+        # Set system prompt based on detected language and intent
         if lang == 'de':
-            specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
-                            - Wenn in der Anfrage nach Projekten gefragt wird, gib nur das Feld _id, title und das Feld createdAt für jedes Projekt zurück.
-                            - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
-                            - WICHTIG: Verwende die EXAKTE _id aus dem Kontext (z.B. "675b4c8e9d1234567890abcd"), NICHT den Platzhalter "objectID"!
-                            - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
+            if intent == 'projects':
+                specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
+                                - Die Anfrage bezieht sich NUR auf PROJEKTE. Gib KEINE Nutzer zurück!
+                                - Gib nur die Felder _id, title und createdAt für jedes Projekt zurück.
+                                - WICHTIG: Verwende die EXAKTE _id aus dem Kontext (z.B. "675b4c8e9d1234567890abcd"), NICHT den Platzhalter "objectID"!
+                                - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
 
-                            {
-                            "message": "Dein Antworttext",
-                            "projects": [
                                 {
-                                "_id": "675b4c8e9d1234567890abcd",
-                                "title": "Projektname",
-                                "createdAt": "2024-10-21 10:30:00"
+                                "message": "Dein Antworttext",
+                                "projects": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "title": "Projektname",
+                                    "createdAt": "2024-10-21 10:30:00"
+                                    }
+                                ],
+                                "users": []
                                 }
-                            ],
-                            "users": [
+
+                                Außerdem gib nur den Output zurück; nichts vom Input.
+                                WICHTIG: Das "users" Array MUSS leer sein []!
+
+                                Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
+            elif intent == 'users':
+                specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
+                                - Die Anfrage bezieht sich NUR auf NUTZER/PERSONEN. Gib KEINE Projekte zurück!
+                                - Gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
+                                - WICHTIG: Verwende die EXAKTE _id aus dem Kontext (z.B. "675b4c8e9d1234567890abcd"), NICHT den Platzhalter "objectID"!
+                                - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
+
                                 {
-                                "_id": "675b4c8e9d1234567890abcd",
-                                "firstName": "Vorname",
-                                "lastName": "Nachname",
-                                "interestedTags": ["Tag1", "Tag2"]
+                                "message": "Dein Antworttext",
+                                "projects": [],
+                                "users": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "firstName": "Vorname",
+                                    "lastName": "Nachname",
+                                    "interestedTags": ["Tag1", "Tag2"]
+                                    }
+                                ]
                                 }
-                            ]
-                            }
 
-                            Außerdem gib nur den Output zurück; nichts vom Input
-                            Falls keine Projekte oder Personen in der Anfrage relevant sind, lass die entsprechenden Listen leer.
+                                Außerdem gib nur den Output zurück; nichts vom Input.
+                                WICHTIG: Das "projects" Array MUSS leer sein []!
 
-                            Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
+                                Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
+            else:  # both
+                specific_prompt = """Ich möchte, dass du nur bestimmte Felder aus der Datenbank extrahierst und in deiner Antwort zurückgibst. Bitte beachte folgende Anforderungen:
+                                - Wenn in der Anfrage nach Projekten gefragt wird, gib nur die Felder _id, title und createdAt für jedes Projekt zurück.
+                                - Wenn in der Anfrage nach Personen gefragt wird, gib nur die Felder _id, firstName, lastName und interestedTags für jede Person zurück.
+                                - WICHTIG: Verwende die EXAKTE _id aus dem Kontext (z.B. "675b4c8e9d1234567890abcd"), NICHT den Platzhalter "objectID"!
+                                - In deiner Antwort erwarte ich EXAKT folgendes JSON-Format:
+
+                                {
+                                "message": "Dein Antworttext",
+                                "projects": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "title": "Projektname",
+                                    "createdAt": "2024-10-21 10:30:00"
+                                    }
+                                ],
+                                "users": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "firstName": "Vorname",
+                                    "lastName": "Nachname",
+                                    "interestedTags": ["Tag1", "Tag2"]
+                                    }
+                                ]
+                                }
+
+                                Außerdem gib nur den Output zurück; nichts vom Input
+                                Falls keine Projekte oder Personen in der Anfrage relevant sind, lass die entsprechenden Listen leer.
+
+                                Verwende keine vertraulichen Daten wie Passwörter, E-Mail-Adressen oder Codes in der Antwort."""
         else:
-            specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
-                            - When the request is about projects, return only the fields _id, title, and createdAt for each project.
-                            - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
-                            - IMPORTANT: Use the EXACT _id from the context (e.g., "675b4c8e9d1234567890abcd"), NOT the placeholder "objectID"!
-                            - In your response, I expect EXACTLY the following JSON format:
+            if intent == 'projects':
+                specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
+                                - This request is ONLY about PROJECTS. Do NOT return any users!
+                                - Return only the fields _id, title, and createdAt for each project.
+                                - IMPORTANT: Use the EXACT _id from the context (e.g., "675b4c8e9d1234567890abcd"), NOT the placeholder "objectID"!
+                                - In your response, I expect EXACTLY the following JSON format:
 
-                            {
-                            "message": "Your response text",
-                            "projects": [
                                 {
-                                "_id": "675b4c8e9d1234567890abcd",
-                                "title": "Project name",
-                                "createdAt": "2024-10-21 10:30:00"
+                                "message": "Your response text",
+                                "projects": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "title": "Project name",
+                                    "createdAt": "2024-10-21 10:30:00"
+                                    }
+                                ],
+                                "users": []
                                 }
-                            ],
-                            "users": [
+
+                                Also, only return the output; nothing from the input.
+                                IMPORTANT: The "users" array MUST be empty []!
+
+                                Do not use confidential data such as passwords, email addresses, or codes in the response.
+
+                                Always answer in the same language as the following request:"""
+            elif intent == 'users':
+                specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
+                                - This request is ONLY about USERS/PEOPLE. Do NOT return any projects!
+                                - Return only the fields _id, firstName, lastName, and interestedTags for each person.
+                                - IMPORTANT: Use the EXACT _id from the context (e.g., "675b4c8e9d1234567890abcd"), NOT the placeholder "objectID"!
+                                - In your response, I expect EXACTLY the following JSON format:
+
                                 {
-                                "_id": "675b4c8e9d1234567890abcd",
-                                "firstName": "First name",
-                                "lastName": "Last name",
-                                "interestedTags": ["Tag1", "Tag2"]
+                                "message": "Your response text",
+                                "projects": [],
+                                "users": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "firstName": "First name",
+                                    "lastName": "Last name",
+                                    "interestedTags": ["Tag1", "Tag2"]
+                                    }
+                                ]
                                 }
-                            ]
-                            }
 
-                            Also, only return the output; nothing from the input.
-                            If no projects or people are relevant in the request, leave the corresponding lists empty.
+                                Also, only return the output; nothing from the input.
+                                IMPORTANT: The "projects" array MUST be empty []!
 
-                            Do not use confidential data such as passwords, email addresses, or codes in the response.
+                                Do not use confidential data such as passwords, email addresses, or codes in the response.
 
-                            Always answer in the same language as the following request:"""
+                                Always answer in the same language as the following request:"""
+            else:  # both
+                specific_prompt = """I want you to extract only specific fields from the database and return them in your response. Please consider the following requirements:
+                                - When the request is about projects, return only the fields _id, title, and createdAt for each project.
+                                - When the request is about people, return only the fields _id, firstName, lastName, and interestedTags for each person.
+                                - IMPORTANT: Use the EXACT _id from the context (e.g., "675b4c8e9d1234567890abcd"), NOT the placeholder "objectID"!
+                                - In your response, I expect EXACTLY the following JSON format:
+
+                                {
+                                "message": "Your response text",
+                                "projects": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "title": "Project name",
+                                    "createdAt": "2024-10-21 10:30:00"
+                                    }
+                                ],
+                                "users": [
+                                    {
+                                    "_id": "675b4c8e9d1234567890abcd",
+                                    "firstName": "First name",
+                                    "lastName": "Last name",
+                                    "interestedTags": ["Tag1", "Tag2"]
+                                    }
+                                ]
+                                }
+
+                                Also, only return the output; nothing from the input.
+                                If no projects or people are relevant in the request, leave the corresponding lists empty.
+
+                                Do not use confidential data such as passwords, email addresses, or codes in the response.
+
+                                Always answer in the same language as the following request:"""
         
         # Combine specific prompt with context and query (works for both languages)
         user_prompt = f"""{specific_prompt}
@@ -643,11 +791,11 @@ class RAGChatbot:
         completion = client.chat.completions.create(
             model="gpt-4-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for finding relevant projects and users. Answer based on the provided information. Be precise and helpful."},
+                {"role": "system", "content": "You are a helpful assistant for finding relevant projects and users. Answer based on the provided information. Be precise and helpful. Always return valid, complete JSON."},
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=1500
         )
         
         # Parse the JSON response from GPT-4-turbo
@@ -668,7 +816,7 @@ class RAGChatbot:
             print(f"Failed to parse GPT-4 response as JSON: {e}")
             print(f"Raw response: {completion.choices[0].message.content}")
             
-            # Fallback: return structured data manually
+            # Fallback: return structured data manually based on intent
             def extract_tag_names(items):
                 if not items:
                     return []
@@ -680,17 +828,26 @@ class RAGChatbot:
                         names.append(str(item))
                 return names
             
+            # Build result based on intent
             result = {
-                "message": completion.choices[0].message.content,
-                "projects": [
+                "message": completion.choices[0].message.content[:200] + "..."  # Truncate long messages
+            }
+            
+            # Only include relevant data based on intent
+            if intent in ['projects', 'both']:
+                result["projects"] = [
                     {
                         "_id": project.project_id,
                         "title": project.title,
                         "createdAt": project.created
                     }
                     for project, score in relevant_projects
-                ],
-                "users": [
+                ]
+            else:
+                result["projects"] = []
+            
+            if intent in ['users', 'both']:
+                result["users"] = [
                     {
                         "_id": user.user_id,
                         "firstName": user.first_name,
@@ -699,7 +856,8 @@ class RAGChatbot:
                     }
                     for user, score in relevant_users
                 ] if relevant_users else []
-            }
+            else:
+                result["users"] = []
             
             return result
     
@@ -717,19 +875,26 @@ class RAGChatbot:
         """
         print(f"\nSearching for: '{question}'")
         
-        # Retrieve relevant projects (filter by user_id if provided)
-        relevant_projects = self.retrieve_relevant_projects(question, user_id, top_k)
-        print(f"Found {len(relevant_projects)} relevant projects")
+        # Detect user intent
+        intent = self.detect_query_intent(question)
+        print(f"Detected intent: {intent}")
         
-        # Retrieve users (filter by user_id if provided)
-        relevant_users = None
-        if len(self.users) > 0:
-            relevant_users = self.retrieve_relevant_users(question, user_id, top_k)
-            print(f"Found {len(relevant_users)} relevant users")
+        relevant_projects = []
+        relevant_users = []
+        
+        # Retrieve based on detected intent
+        if intent in ['projects', 'both']:
+            relevant_projects = self.retrieve_relevant_projects(question, user_id, top_k)
+            print(f"Found {len(relevant_projects)} relevant projects")
+        
+        if intent in ['users', 'both']:
+            if len(self.users) > 0:
+                relevant_users = self.retrieve_relevant_users(question, user_id, top_k)
+                print(f"Found {len(relevant_users)} relevant users")
         
         # Generate response
-        print("Generating response with GPT-4...")
-        response = self.generate_response(question, relevant_projects, relevant_users)
+        print(f"Generating response with GPT-4 for intent '{intent}'...")
+        response = self.generate_response(question, relevant_projects, relevant_users, intent)
         
         # Log to database
         save_chat_to_db(question, response)
