@@ -34,9 +34,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Expose the port (if your application serves something directly, otherwise this can be omitted)
 EXPOSE 8000
 
-# is added during runtime
-# ENV OPENAI_API_KEY=""
-
 # Command to run your script
 # CMD ["python", "script.py"]
 CMD ["python", "main.py"]
