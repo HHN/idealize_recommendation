@@ -22,9 +22,9 @@ services:
       timeout: 5s
       start_period: 40s
       retries: 30
-    networks:
-      - backend-network
-      - default
+    ports:
+      - "3306:3306"
+      - "8000:8000"
 
   chatbot-api:
     build: .
@@ -35,21 +35,10 @@ services:
     depends_on:
       mariadb:
         condition: service_healthy
-    ports:
-      - "8000:8000"
-    networks:
-      - backend-network
-      - default
+    network_mode: "service:mariadb"
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     environment:
-      SERVER_BASE_URL: "http://backend-ai:7000/"
+      SERVER_BASE_URL: "http://host.docker.internal:7000/api/"
 
 volumes:
   db_data:
-
-networks:
-  backend-network:
-    external: true
-    name: idealize_server_ai_server-network-ai
-  default:
-    driver: bridge
